@@ -98,6 +98,30 @@ def test_extract_empty_text(settings: Settings, stub_extraction_service: Extract
     assert r.status_code == 422
 
 
+def test_extract_oversize_document_text_returns_422(
+    settings: Settings, stub_extraction_service: ExtractionService
+) -> None:
+    """Document text exceeding `max_length` is rejected at the API layer.
+
+    Bedrock's context-window limit would catch oversized payloads anyway, but
+    rejecting at the API saves a model call and bounds memory cost on the
+    threadpool worker. See the prompt-injection threat-model ADR.
+    """
+    huge = "a" * 200_001  # one character past the documented 200,000-char cap
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract",
+            json={"schema_name": "invoice", "document_text": huge},
+        )
+    assert r.status_code == 422
+    # Pydantic surfaces this as a string-too-long error in the validation
+    # detail; the exact wording depends on the FastAPI/pydantic versions but
+    # the field name is stable.
+    body = r.json()
+    detail_blob = str(body)
+    assert "document_text" in detail_blob
+
+
 def test_correlation_id_round_trip(
     settings: Settings, stub_extraction_service: ExtractionService
 ) -> None:

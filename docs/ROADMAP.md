@@ -33,6 +33,13 @@ was scoped out of an earlier release to keep that release reviewable.
   `asyncio.to_thread`, so the Bedrock round-trip no longer blocks the
   FastAPI event loop. The threadpool unblocks the loop today; native
   async via `Agent.invoke_async` is reserved for the streaming path.
+- **Prompt-injection input-side hardening** ([ADR-0011](adr/0011-prompt-injection-threat-model.md)):
+  `<document>...</document>` XML wrapper replaces the triple-quote delimiter
+  in `extract.j2` / `retry.j2`; `system.j2` and `extract_image.j2` carry an
+  explicit Trust-boundary paragraph telling the model to treat document
+  body and in-image text as data, not instructions; `document_text` carries
+  a `max_length=200_000` cap that returns 422 at the API layer. Vision-
+  mode grounding and MCP response sanitisation remain Critical follow-ons.
 - **Streaming endpoint** `POST /extract/stream`: emits Server-Sent
   Events (`event: chunk` per text delta from `Agent.stream_async`,
   then exactly one terminal `event: result` or `event: error`). Schema

@@ -187,3 +187,26 @@ def test_pdf_with_one_failing_page_does_not_break_overall(
     )
     out = process_upload(b"%PDF-1.4 stub", "application/pdf")
     assert out.text == "good content"
+
+
+def test_pdf_text_extraction_caps_at_max_document_text_chars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PDF text extraction past the document-text cap must reject at the
+    upload layer.
+
+    The JSON `/extract` endpoint enforces `max_length=200_000` on
+    `document_text` via Pydantic; without this defence the upload path
+    could send a much larger string straight into the prompt by abusing
+    PDF compression. ADR-0011 promises this parity.
+    """
+    from bedrock_strands_agent.extraction.document import MAX_DOCUMENT_TEXT_CHARS
+
+    # One char past the cap when joined with "\n\n" between two pages.
+    half = "x" * (MAX_DOCUMENT_TEXT_CHARS // 2)
+    monkeypatch.setattr(
+        "bedrock_strands_agent.extraction.document.PdfReader",
+        _stub_reader_factory([_StubPage(half), _StubPage(half)]),
+    )
+    with pytest.raises(UnsupportedDocumentError, match=r"exceeding the .* cap"):
+        process_upload(b"%PDF-1.4 stub", "application/pdf")

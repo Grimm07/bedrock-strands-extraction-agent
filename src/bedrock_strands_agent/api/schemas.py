@@ -44,7 +44,18 @@ class ExtractRequestBody(BaseModel):
         ),
         examples=["1.0.0"],
     )
-    document_text: str = Field(min_length=1)
+    document_text: str = Field(
+        min_length=1,
+        # 200,000-character upper bound. Generous (~50K tokens for
+        # English) and well within Claude Sonnet 4.6's 200K-token context
+        # window, but small enough to (a) reject obvious DoS payloads at
+        # the API layer rather than burning a Bedrock call to fail at the
+        # context limit, and (b) bound memory cost on the threadpool
+        # worker that runs each extraction. The same cap is applied to
+        # PDF-extracted text in `extraction.document._process_pdf`. See
+        # ADR-0011 for the threat-model rationale.
+        max_length=200_000,
+    )
     document_id: str | None = None
 
 

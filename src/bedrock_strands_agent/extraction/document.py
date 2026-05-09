@@ -45,6 +45,13 @@ SUPPORTED_IMAGE_TYPES: Final[dict[str, ImageFormat]] = {
 # uploading.
 MAX_UPLOAD_BYTES: Final = 5 * 1024 * 1024
 
+# Upper bound on the number of characters of text we will route into the
+# extraction prompt. Mirrors the `max_length=200_000` cap on
+# `ExtractRequestBody.document_text` so PDF uploads that compress aggressively
+# (a 1 MiB PDF can extract to multi-MB of text) don't skip the input bound
+# the JSON-body endpoint enforces. See ADR-0011.
+MAX_DOCUMENT_TEXT_CHARS: Final = 200_000
+
 # Server-side rasterisation settings for image-only PDFs. 200 DPI is the
 # accepted sweet spot for OCR-grade vision input — 300 DPI roughly doubles
 # the rendered byte size for a marginal accuracy gain on Claude vision.
@@ -145,7 +152,19 @@ def _process_pdf(content: bytes) -> DocumentInput:
                 len(text_parts),
                 empty_pages,
             )
-        return DocumentInput(mode="text", text="\n\n".join(text_parts))
+        joined = "\n\n".join(text_parts)
+        # Mirror the `ExtractRequestBody.document_text` cap so the upload
+        # path can't skip the input bound the JSON-body endpoint enforces.
+        # PDFs compress aggressively; a 1 MiB PDF can extract to multi-MB
+        # of text. See ADR-0011.
+        if len(joined) > MAX_DOCUMENT_TEXT_CHARS:
+            msg = (
+                f"PDF text extraction yielded {len(joined)} characters, "
+                f"exceeding the {MAX_DOCUMENT_TEXT_CHARS}-character cap. "
+                "Split the document client-side or extract the relevant pages."
+            )
+            raise UnsupportedDocumentError(msg)
+        return DocumentInput(mode="text", text=joined)
 
     # No embedded text on any page — treat the upload as a scanned PDF and
     # render up to RASTER_MAX_PAGES pages to PNG for the vision path.

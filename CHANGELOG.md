@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase D — LLM-security input-side hardening)
+
+- **Prompt-injection threat model** ([ADR-0011](docs/adr/0011-prompt-injection-threat-model.md))
+  pins the trust boundary (caller trusted, document content untrusted) and
+  documents the layered defences plus the explicit deferrals (vision
+  grounding, MCP response sanitisation, semantic validity).
+- **Document delimiter hardened.** `templates/extract.j2` (version 2.0.0)
+  and `templates/retry.j2` (version 3.0.0) now wrap `document_text` in
+  `<document>...</document>` XML tags instead of triple-quote `"""`. A
+  document containing literal `"""` could escape the previous wrapper.
+- **System prompt trust boundary.** `templates/system.j2` (version 1.1.0)
+  carries an explicit paragraph telling the model that text inside
+  `<document>` tags is untrusted user input and must be treated as data,
+  not as instructions. Includes guidance on embedded `</document>`
+  close-tags and on imperative language inside attached image pixels.
+- **Vision-mode trust boundary.** `templates/extract_image.j2`
+  (version 1.1.0) carries the same paragraph for image content,
+  explicitly calling out adversarial pixel-level text.
+- **Input cap.** `ExtractRequestBody.document_text` declares
+  `max_length=200_000` (about 50K English tokens). Oversized payloads
+  return HTTP 422 at the API layer with no Bedrock cost.
+- New tests in `tests/test_prompts.py` pin the wrapper-tag contract and
+  exercise an adversarial body containing `</document>` + "ignore
+  previous instructions". New test in `tests/test_api.py` pins the 422
+  on oversized `document_text`.
+
 ## [0.3.0] — 2026-05-09
 
 ### Added (Phase D — extraction surface, async, observability follow-on)
