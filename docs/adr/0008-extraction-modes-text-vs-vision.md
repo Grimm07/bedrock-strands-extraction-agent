@@ -128,12 +128,31 @@ text the caller produces.
   verify against). `overall_confidence` loses the ×1.1 citation
   bonus on every field; we recommend keeping the `auto_approve`
   threshold at the same value (≥ 0.85) since the bonus is small.
-- Scanned PDFs without embedded text are rejected — callers must
-  rasterise client-side. v0.3 may add `pypdfium2` if demand justifies
-  the dep weight.
 - The vision path bypasses `Strands.Agent`, so a future requirement to
   log per-tool-call timing during model reasoning would force a refactor
   back through Strands.
+
+## v0.3 update — server-side rasterisation of scanned PDFs
+
+The original decision rejected scanned PDFs with a 422 asking the caller
+to rasterise client-side, deferring `pypdfium2` to v0.3 to keep the
+install footprint small. That follow-on now ships:
+
+- `pypdfium2` is a hard dep (statically-linked PDFium, ~3.5 MiB binary
+  wheel, no system packages, Apache-2.0 + BSD-3 licensing).
+- A scanned PDF (no embedded text on any page) is rendered to PNG at
+  `RASTER_DPI` (200) and routed to the existing vision path. The first
+  `RASTER_MAX_PAGES` (5) pages are kept; further pages are silently
+  dropped. Both constants live in
+  `src/bedrock_strands_agent/extraction/document.py` and are deliberately
+  not surfaced as `Settings` until a real workload asks for it.
+- Mixed-content PDFs (some text, some scanned pages) continue to use the
+  text path: any page with extractable text wins. Callers that need
+  vision treatment for the scanned pages of a mixed PDF must split
+  client-side.
+- The 5 MiB upload cap (`MAX_UPLOAD_BYTES`) still applies to the *input*
+  PDF; rendered PNGs do not pass back through the cap, but the page-cap
+  bounds the total Converse payload in practice.
 
 ## References
 

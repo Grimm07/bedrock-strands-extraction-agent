@@ -165,6 +165,48 @@ def test_extract_document_pdf_with_text_routes_to_text(
     assert body["schema"] == "invoice"
 
 
+def _image_only_pdf_bytes(num_pages: int = 1) -> bytes:
+    """Build an image-only PDF (no text layer) — surrogate for a scan."""
+    palette = ("red", "green", "blue")
+    pages = [
+        _PILImage.new("RGB", (120, 160), color=palette[i % len(palette)]) for i in range(num_pages)
+    ]
+    buf = _io.BytesIO()
+    pages[0].save(buf, format="PDF", save_all=True, append_images=pages[1:])
+    return buf.getvalue()
+
+
+def test_extract_document_scanned_pdf_routes_to_vision(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PDF without embedded text is rasterised server-side and routed to vision."""
+    captured_image_count: dict[str, int] = {}
+
+    def _fake_invoke_multimodal(**kwargs: object) -> str:
+        images = kwargs.get("images")
+        captured_image_count["count"] = len(list(images)) if images is not None else 0
+        return _INVOICE_CANNED
+
+    monkeypatch.setattr(
+        "bedrock_strands_agent.extraction.service.invoke_multimodal",
+        _fake_invoke_multimodal,
+    )
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice"},
+            files={"file": ("scan.pdf", _image_only_pdf_bytes(num_pages=2), "application/pdf")},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["schema"] == "invoice"
+    assert body["fields"][0]["name"] == "invoice_number"
+    # Both pages must have been rasterised and forwarded to the vision call.
+    assert captured_image_count["count"] == 2
+
+
 def test_extract_document_unsupported_mime_returns_422(
     settings: Settings, stub_extraction_service: ExtractionService
 ) -> None:

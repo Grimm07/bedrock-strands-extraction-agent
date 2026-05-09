@@ -17,6 +17,12 @@ was scoped out of an earlier release to keep that release reviewable.
   offline, asserting `modelId` and request shape on the
   `bedrock-runtime` `ConverseStream` call. Catches BedrockModel-wiring
   regressions the higher-layer Agent mocks cannot see.
+- **Scanned PDF support** (closes the v0.3 follow-on from ADR-0008):
+  `pypdfium2` is now a hard dep; a PDF with no embedded text is rendered
+  server-side to PNG at 200 DPI (capped at 5 pages by the `RASTER_DPI` /
+  `RASTER_MAX_PAGES` constants in `extraction.document`) and routed to
+  the existing vision path. Mixed-text PDFs still use the text path —
+  any page with extractable text wins. ADR-0008 has the v0.3 amendment.
 
 ## Released in 0.2.0 (Phase A + Phase C partial)
 

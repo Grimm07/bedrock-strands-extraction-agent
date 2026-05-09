@@ -275,20 +275,21 @@ Do you already have clean text from upstream?
 ├── yes ─▶ POST /extract  (cheapest, fastest)
 └── no
     │
-    ├── Is your input a PDF that contains embedded text? (Native PDFs do.)
-    │   ├── yes ─▶ POST /extract/document — service extracts text and
-    │   │           routes to the text path automatically. Identical
-    │   │           wire-format response.
-    │   └── no  ─▶ PDF is a scan; convert to PNG / JPEG and use the next branch.
+    ├── Is your input a PDF?
+    │   ├── PDF with embedded text ─▶ POST /extract/document — service
+    │   │     extracts text via pypdf and routes to the text path
+    │   │     automatically. Identical wire-format response.
+    │   └── PDF without embedded text (scan) ─▶ POST /extract/document —
+    │         service rasterises the first 5 pages to PNG at 200 DPI via
+    │         pypdfium2 and routes to the vision path. Same endpoint,
+    │         no client-side conversion required.
     │
     └── Is your input an image (PNG / JPEG / WebP / GIF, ≤ 5 MB)?
         ├── yes ─▶ POST /extract/document — vision path. Highest
         │           per-call cost, highest accuracy on novel layouts.
-        └── no  ─▶ Convert first. PDF rasterisation is intentionally not
-                  in this service today (deps stay slim); a Lambda or
-                  client-side helper can render a page to PNG before
-                  upload. We may add `pypdfium2` in v0.3 if demand
-                  justifies the dep weight.
+        └── no  ─▶ Pre-convert to one of the supported types. The
+                  endpoint accepts PDF or any of the four image MIME
+                  types listed; anything else returns 422.
 ```
 
 ---

@@ -115,13 +115,52 @@ def test_pdf_concatenates_multiple_pages_with_blank_line(
     assert out.text == "page one\n\npage two"
 
 
-def test_pdf_without_embedded_text_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "bedrock_strands_agent.extraction.document.PdfReader",
-        _stub_reader_factory([_StubPage(""), _StubPage("   ")]),
-    )
-    with pytest.raises(UnsupportedDocumentError, match="no embedded text"):
-        process_upload(b"%PDF-1.4 stub", "application/pdf")
+def _image_only_pdf_bytes(num_pages: int = 1) -> bytes:
+    """Build an image-only PDF (no text layer) — a scanned-PDF surrogate.
+
+    PIL's ``save(format="PDF")`` writes each page as a single image XObject
+    with no text layer, so ``pypdf.PdfPage.extract_text()`` returns ``""``
+    for every page. This is structurally simpler than a real scanner output
+    (which uses CCITT G4 or DCTDecode streams); good enough to exercise the
+    rasterisation path but not a substitute for fixture-based tests against
+    real scans, which a future change should add.
+    """
+    palette = ("red", "green", "blue", "yellow", "purple", "orange")
+    pages = [
+        Image.new("RGB", (120, 160), color=palette[i % len(palette)]) for i in range(num_pages)
+    ]
+    buf = io.BytesIO()
+    pages[0].save(buf, format="PDF", save_all=True, append_images=pages[1:])
+    return buf.getvalue()
+
+
+def test_pdf_without_embedded_text_renders_to_images() -> None:
+    """A scanned-style (image-only) PDF is rasterised server-side and routed
+    to the vision path. Validates the v0.3 follow-on to ADR-0008.
+    """
+    out = process_upload(_image_only_pdf_bytes(num_pages=2), "application/pdf")
+    assert out.mode == "image"
+    assert out.image_format == "png"
+    assert out.text is None
+    assert len(out.images) == 2
+    # PNG signature must appear at the start of every rendered page so the
+    # downstream Bedrock Converse call sees valid image bytes.
+    for png in out.images:
+        assert png.startswith(b"\x89PNG\r\n\x1a\n"), "rendered page is not a valid PNG"
+
+
+def test_rasterized_pdf_caps_pages_at_module_constant() -> None:
+    """A scanned PDF longer than ``RASTER_MAX_PAGES`` is truncated, not rejected.
+
+    The cap exists so a 50-page scan can't fan out into a 50-image Converse
+    request. Callers that need every page should split client-side.
+    """
+    from bedrock_strands_agent.extraction.document import RASTER_MAX_PAGES
+
+    over_cap = RASTER_MAX_PAGES + 2
+    out = process_upload(_image_only_pdf_bytes(num_pages=over_cap), "application/pdf")
+    assert out.mode == "image"
+    assert len(out.images) == RASTER_MAX_PAGES
 
 
 def test_unparseable_pdf_raises(monkeypatch: pytest.MonkeyPatch) -> None:
