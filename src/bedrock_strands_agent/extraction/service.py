@@ -127,24 +127,21 @@ class ExtractionService:
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream a text-mode extraction as Strands events.
 
-        Yields:
-            ``{"type": "chunk", "text": <delta>}`` for each text delta the
-            model emits, followed by exactly one terminal event:
+        Yields ``{"type": "chunk", "text": <delta>}`` for each text delta the
+        model emits, followed by exactly one terminal event: either
+        ``{"type": "result", "result": <ExtractionResult.model_dump>}`` on
+        success, or ``{"type": "error", "detail": <str>}`` on a parse or
+        validation failure of the accumulated text.
 
-            * ``{"type": "result", "result": <ExtractionResult.model_dump>}``
-              on success.
-            * ``{"type": "error", "detail": <str>}`` on a parse/validation
-              failure of the accumulated text.
+        The retry loop that ``extract`` uses is intentionally NOT applied
+        here — re-prompting mid-stream is a poor UX. Callers that need
+        self-correction should fall back to ``POST /extract`` after a
+        stream-side error. Consequently the ``extraction.stream`` span
+        never opens an ``extraction.attempt`` sub-span (see ADR-0009);
+        trace queries that filter on ``extraction.attempt`` will not
+        match streaming traces by design.
 
-            The retry loop that ``extract`` uses is intentionally NOT applied
-            here — re-prompting mid-stream is a poor UX. Callers that need
-            self-correction should fall back to ``POST /extract`` after a
-            stream-side error. Consequently the ``extraction.stream`` span
-            never opens an ``extraction.attempt`` sub-span (see ADR-0009);
-            trace queries that filter on ``extraction.attempt`` will not
-            match streaming traces by design.
-
-        See `docs/ROADMAP.md` "Released since 0.2.0" — partial-field
+        See ``docs/ROADMAP.md`` "Released since 0.2.0" — partial-field
         streaming is a future enhancement on top of this raw-delta path.
         """
         schema = resolve_schema(schema_name, schema_version)

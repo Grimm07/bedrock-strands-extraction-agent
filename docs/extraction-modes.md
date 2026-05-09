@@ -312,6 +312,14 @@ Do you already have clean text from upstream?
   `validate_ssn`-style call-site logging during reasoning, route to
   the text endpoint or wait for the Strands native multimodal
   integration in a future release.
+- **Pinning the schema version.** All three endpoints (`/extract`,
+  `/extract/document`, `/extract/stream`) accept an optional
+  `schema_version` parameter. When supplied, the request fails with
+  `404` if the registry's current version for `schema_name` does not
+  match (pin-or-fail, by design — see `extraction.schemas.resolve_schema`).
+  Omit to track HEAD of the registry. Useful when an upstream caller
+  has been validated against e.g. `invoice@1.0.0` and a registry bump
+  to `1.1.0` should not silently change the response contract.
 
 ---
 
@@ -323,5 +331,7 @@ Do you already have clean text from upstream?
   — the upstream contract both paths share.
 - [ADR-0004](./adr/0004-confidence-calibration.md) — how the
   `citation_verified` bonus is computed (and why vision mode loses it).
-- [`docs/observability.md`](./observability.md) (Phase D10) — the
-  span attributes both paths emit.
+- Phase D10 deliverable: a dedicated `docs/observability.md` documenting
+  the span attributes both paths emit. Not yet present; for now see the
+  inline `extraction.run` / `extraction.stream` attributes in
+  `extraction/service.py`.

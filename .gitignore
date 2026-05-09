@@ -52,3 +52,7 @@ coverage.xml
 
 # Audit artifacts
 requirements.audit.txt
+
+# mkdocs build output
+site/
+

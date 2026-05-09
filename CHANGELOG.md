@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-09
+
+### Added (Phase D — extraction surface, async, observability follow-on)
+
+- **`POST /extract/stream`** — Server-Sent Events streaming endpoint. Emits
+  `event: chunk` per text delta from `Agent.stream_async`, then exactly one
+  terminal `event: result` (success) or `event: error` (parse/validation
+  failure). Schema resolution is pre-flighted so unknown-name or
+  mismatched-version requests return HTTP 404 *before* the SSE response
+  opens. Retry loop intentionally bypassed (re-prompting mid-stream is poor
+  UX); see ADR-0009.
+- **Scanned-PDF rasterisation**: PDFs without embedded text are now
+  rendered server-side via `pypdfium2` at 200 DPI (`RASTER_DPI`), capped at
+  5 pages (`RASTER_MAX_PAGES`), and routed to the existing vision path.
+  Closes the v0.3 deferral from ADR-0008. Mixed-text PDFs continue to use
+  the text path; a WARNING log surfaces silently-dropped scanned pages.
+- **Request-side schema versioning**: `ExtractRequestBody.schema_version`
+  and the matching `Form` field on `/extract/document` pin the request to
+  a registered schema version. Pin-or-fail: mismatch returns 404. Omitting
+  tracks HEAD of the registry. Helper promoted to public
+  `extraction.schemas.resolve_schema(name, version)`.
+- **Non-blocking route handlers**: `/extract` and `/extract/document` now
+  offload the synchronous `ExtractionService.extract` /
+  `extract_document` calls via `asyncio.to_thread`, so the Bedrock
+  round-trip no longer blocks the FastAPI event loop. The threadpool path
+  unblocks today; native `Agent.invoke_async` is reserved for the
+  streaming path.
+- **OpenAPI typed-error coverage**: `/extract` documents 404 + 502 with
+  `ErrorResponse`; `/extract/document` documents 404 + 422 + 502.
+  Validation 422s on `/extract` continue to use FastAPI's default
+  `HTTPValidationError` shape. Three new
+  `test_openapi_documents_*` tests pin the contract.
+- **Boto3-layer e2e test** (`tests/test_bedrock_boto3_e2e.py`): patches
+  `BaseClient._make_api_call` to drive a real `BedrockModel` end-to-end
+  offline, asserting `modelId` and request shape on the
+  `bedrock-runtime` `ConverseStream` call. Catches `BedrockModel`-wiring
+  regressions the higher-layer Agent mocks cannot see.
+- **CLAUDE.md**: project-specific Claude Code context — editing gotchas,
+  testing conventions (`stub_extraction_service`, the `_make_api_call`
+  pattern, the PIL → image-only-PDF surrogate), and pre-defined project
+  subagents (`prompt-template-reviewer`, `security-reviewer`).
+- **ADRs 0005–0007 and 0009–0010** backfilled: Bedrock as default
+  provider; JSON-only response contract (prompt-first, parser-tolerant);
+  MCP-as-tools; bounded self-correcting retry (`max_retries=2`, ≤3 total
+  attempts); ≥85% coverage gate.
+- New telemetry attribute `extraction.streamed_chars` on the
+  `extraction.stream` span; existing attributes mirrored from
+  `extraction.run` so dashboards aggregating across modes don't drop
+  streamed traffic.
+- `pypdfium2>=4.30` added as a hard dep.
+- `tests/conftest.py::stub_streaming_service` and
+  `stub_streaming_service_returns_garbage` fixtures for streaming and
+  error-path tests.
+
+### Changed
+
+- `extraction.service._resolve_schema` → public
+  `extraction.schemas.resolve_schema`. The helper is a schema-lookup
+  utility, not service state; promoting it eliminated the only
+  cross-module private import.
+- ADR-0009 supersedes the placeholder "retry-once-then-fail" entry on
+  the previous roadmap; the actual default has been `max_retries=2`
+  since v0.2 (3 total attempts at worst).
+- Coverage gate raised 80 → 85 (actual ~93%).
+
 ### Added (Phase A — production hardening)
 
 - Pre-commit gate (`.pre-commit-config.yaml`): ruff, ruff-format, mypy, bandit,
@@ -138,4 +203,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triggered pip-audit's internal venv creation, which fails to bootstrap
   `ensurepip` on uv-managed Python builds.
 
-[Unreleased]: https://github.com/your-org/bedrock-strands-agent/compare/HEAD
+[Unreleased]: https://github.com/your-org/bedrock-strands-agent/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/your-org/bedrock-strands-agent/compare/v0.1.0...v0.3.0

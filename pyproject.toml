@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bedrock-strands-agent"
-version = "0.1.0"
+version = "0.3.0"
 description = "Form-extraction agent built on the Strands Agents SDK with Amazon Bedrock."
 readme = "README.md"
 license = { text = "Apache-2.0" }

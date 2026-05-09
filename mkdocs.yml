@@ -42,12 +42,20 @@ nav:
   - Technology stack: tech-stack.md
   - Roadmap: ROADMAP.md
   - Contributing: CONTRIBUTING.md
+  - Extraction modes: extraction-modes.md
   - Service Level Objectives: slos.md
   - Architecture decisions:
       - Index: adr/README.md
       - "0001 — Strands SDK": adr/0001-strands-sdk-over-langchain.md
       - "0002 — Schema-first extraction": adr/0002-schema-first-extraction-with-self-correcting-retry.md
       - "0003 — AgentCore deployment (proposed)": adr/0003-agentcore-full-platform-deployment.md
+      - "0004 — Confidence calibration": adr/0004-confidence-calibration.md
+      - "0005 — Bedrock as default provider": adr/0005-bedrock-as-default-provider.md
+      - "0006 — JSON-only response contract": adr/0006-json-only-response-contract.md
+      - "0007 — MCP-as-tools": adr/0007-mcp-as-tools.md
+      - "0008 — Text vs vision extraction modes": adr/0008-extraction-modes-text-vs-vision.md
+      - "0009 — Bounded self-correcting retry": adr/0009-bounded-self-correcting-retry.md
+      - "0010 — ≥85% coverage gate": adr/0010-coverage-gate-85.md
   - Runbooks:
       - On-call: runbooks/oncall.md
       - Bedrock throttling: runbooks/bedrock-throttling.md
