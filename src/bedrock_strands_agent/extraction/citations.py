@@ -53,3 +53,29 @@ def verify_excerpt(doc: str, excerpt: str | None) -> CitationCheck:
     match = matcher.find_longest_match(0, len(nd), 0, len(ne))
     overlap = round(match.size / len(ne) * 100)
     return CitationCheck(verbatim=False, overlap_pct=min(100, max(0, overlap)))
+
+
+def value_anchored_in_excerpt(raw_value: object, excerpt: str | None) -> bool:
+    """Return whether ``raw_value`` is contained inside ``excerpt`` (normalised).
+
+    Closes the schema-confusion gap flagged in ADR-0011: a model can return
+    a verbatim ``source_excerpt`` (passes :func:`verify_excerpt`) but invent
+    a ``value`` that is nowhere inside that excerpt or the wider document.
+    Pairing :func:`verify_excerpt` with this anchor check forces the model
+    to make the relationship between value and excerpt observable.
+
+    Only string-valued ``raw_value`` is checked; non-string values
+    (numbers, booleans, null) skip this check (return ``True``) because
+    they are legitimately normalised forms of excerpt content (e.g.
+    ``value=100`` extracted from ``"Total: $100.00"``,
+    ``value=True`` from ``"Yes"``). Numeric/boolean fabrication is
+    constrained by schema-type validation and the retry loop's required-
+    field checks.
+
+    Empty values and empty excerpts return ``False``.
+    """
+    if not isinstance(raw_value, str):
+        return True
+    if not raw_value or not excerpt:
+        return False
+    return _normalize(raw_value) in _normalize(excerpt)

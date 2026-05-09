@@ -91,15 +91,21 @@ class PromptRenderer:
         validation_errors: list[str] | None = None,
         citation_failures: list[dict[str, Any]] | None = None,
         validator_failures: list[dict[str, Any]] | None = None,
+        value_anchor_failures: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Render a retry prompt with three sections of error context.
+        """Render a retry prompt with up to four sections of error context.
 
         Args:
             schema: The schema being extracted.
             document_text: The full document, repeated below the error sections.
             validation_errors: Free-text strings (typically ``MISSING_REQUIRED:*``).
-            citation_failures: Dicts ``{"name", "excerpt", "overlap_pct"}``.
+            citation_failures: Dicts ``{"name", "excerpt", "overlap_pct"}`` for
+                excerpts that don't appear verbatim in the document.
             validator_failures: Dicts ``{"name", "value", "reason"}``.
+            value_anchor_failures: Dicts ``{"name", "excerpt", "value"}`` for
+                fields where the excerpt IS verbatim in the document but the
+                emitted value is not contained inside that excerpt — the
+                schema-confusion case from ADR-0011.
         """
         return self._env.get_template("retry.j2").render(
             schema=schema,
@@ -107,4 +113,5 @@ class PromptRenderer:
             validation_errors=validation_errors or [],
             citation_failures=citation_failures or [],
             validator_failures=validator_failures or [],
+            value_anchor_failures=value_anchor_failures or [],
         )

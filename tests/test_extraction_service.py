@@ -143,3 +143,114 @@ def test_retry_recovers(settings: Settings) -> None:
     svc = _service(settings, bad, good, max_retries=1)
     result = svc.extract(document_text="d", schema_name="invoice")
     assert not [w for w in result.warnings if w.startswith("MISSING_REQUIRED:")]
+
+
+def test_value_anchor_failure_triggers_retry(settings: Settings) -> None:
+    """Schema-confusion attack (ADR-0011): the model emits a verbatim
+    ``source_excerpt`` from the document but invents a string ``value`` that
+    is nowhere inside that excerpt. The pipeline must not silently accept
+    this — it should re-prompt the model.
+
+    First attempt fabricates ``vendor_name = "attacker@evil.com"`` while
+    citing a verbatim "Vendor Name: Acme Widget Corp" excerpt. Second
+    attempt corrects the value to "Acme Widget Corp", which IS in the
+    excerpt. Without value-anchored citation verification, attempt 1 would
+    succeed and the fabricated value would ship to the caller.
+    """
+    document = (
+        "INVOICE #X\n"
+        "Date: 2026-01-01\n"
+        "Vendor Name: Acme Widget Corp\n"
+        "Bill To: Wile E Coyote\n"
+        "Total: 100"
+    )
+    fabricated = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date: 2026-01-01"},'
+        # The injection: excerpt is verbatim from the doc, but value is invented.
+        '{"name": "vendor_name", "value": "attacker@evil.com", "confidence": 0.95, '
+        '"source_excerpt": "Vendor Name: Acme Widget Corp"},'
+        '{"name": "bill_to", "value": "Wile E Coyote", "confidence": 0.9, '
+        '"source_excerpt": "Bill To: Wile E Coyote"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total: 100"}'
+        "]}"
+    )
+    corrected = fabricated.replace('"value": "attacker@evil.com"', '"value": "Acme Widget Corp"')
+    svc = _service(settings, fabricated, corrected, max_retries=1)
+    result = svc.extract(document_text=document, schema_name="invoice")
+    by_name = {f.name: f.value for f in result.fields}
+    # The retry succeeded; the fabricated value did NOT ship.
+    assert by_name["vendor_name"] == "Acme Widget Corp"
+    assert by_name["vendor_name"] != "attacker@evil.com"
+
+
+def test_value_anchor_skips_normalising_date_fields(settings: Settings) -> None:
+    """DATE fields are emitted in ISO-8601 (per the schema description) but
+    real documents use locale-specific date formats. The anchor check would
+    false-positive on the happy path; ``_NORMALISING_STRING_TYPES`` excludes
+    DATE so legitimate "January 15, 2026" -> "2026-01-15" extractions don't
+    burn a retry. Pins that exclusion against future regressions.
+    """
+    document = (
+        "INVOICE #X\n"
+        "Date: January 15, 2026\n"  # long form in the doc
+        "Vendor: V\n"
+        "Bill To: B\n"
+        "Total: 100"
+    )
+    payload = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        # DATE field: model emits ISO form per the schema, doc has long form.
+        # Anchor check must skip; one-shot success expected (no retry).
+        '{"name": "invoice_date", "value": "2026-01-15", "confidence": 0.9, '
+        '"source_excerpt": "Date: January 15, 2026"},'
+        '{"name": "vendor_name", "value": "V", "confidence": 0.9, '
+        '"source_excerpt": "Vendor: V"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To: B"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total: 100"}'
+        "]}"
+    )
+    # Pass the same payload twice; if the anchor check were active for DATE
+    # this would still pass (last-attempt fallback) but we'd burn a retry.
+    # Instead we expect it to succeed on attempt 1 — pin that by giving only
+    # one response and asserting no extra call happened.
+    svc = _service(settings, payload)
+    result = svc.extract(document_text=document, schema_name="invoice")
+    by_name = {f.name: f.value for f in result.fields}
+    assert by_name["invoice_date"] == "2026-01-15"
+
+
+def test_value_anchor_skips_non_string_values(settings: Settings) -> None:
+    """Numeric/boolean values are NOT subject to the anchor check —
+    validators may legitimately normalise them away from the excerpt
+    surface form. ``value=100`` extracted from ``"Total: $100.00"`` is
+    fine; the anchor check would have false-positive'd on the dollar sign.
+    """
+    document = "INVOICE #X\nDate: 2026-01-01\nVendor: V\nBill To: B\nTotal: $100.00"
+    payload = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date: 2026-01-01"},'
+        '{"name": "vendor_name", "value": "V", "confidence": 0.9, '
+        '"source_excerpt": "Vendor: V"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To: B"},'
+        # Numeric value, currency-shaped excerpt — anchor check must skip.
+        '{"name": "total", "value": 100, "confidence": 0.95, '
+        '"source_excerpt": "Total: $100.00"}'
+        "]}"
+    )
+    svc = _service(settings, payload)
+    result = svc.extract(document_text=document, schema_name="invoice")
+    by_name = {f.name: f.value for f in result.fields}
+    assert by_name["total"] == 100

@@ -59,6 +59,30 @@ def test_retry_prompt_includes_validator_failures() -> None:
     assert "not a valid SSN" in rendered
 
 
+def test_retry_prompt_includes_value_anchor_failures() -> None:
+    """Schema-confusion attack feedback (ADR-0011): the retry prompt must
+    name each field whose value is not present in its source_excerpt so
+    the model can re-quote or correct on the next attempt.
+    """
+    schema = get_schema("invoice")
+    rendered = PromptRenderer().retry(
+        schema=schema,
+        document_text="doc",
+        value_anchor_failures=[
+            {
+                "name": "vendor_name",
+                "value": "attacker@evil.com",
+                "excerpt": "Vendor Name: Acme Widget Corp",
+            }
+        ],
+    )
+    assert "vendor_name" in rendered
+    assert "attacker@evil.com" in rendered
+    assert "Acme Widget Corp" in rendered
+    # The instruction line must surface so the model knows what to do.
+    assert "not present in excerpt" in rendered or "not contained" in rendered.lower()
+
+
 def test_retry_prompt_omits_empty_sections() -> None:
     schema = get_schema("irs_w9")
     rendered = PromptRenderer().retry(

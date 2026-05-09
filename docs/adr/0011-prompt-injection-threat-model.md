@@ -157,19 +157,26 @@ of a successful injection significantly.
   Closing this gap is tracked as a Critical roadmap item ("Ground the
   vision path"); the candidate fix is a second-pass model call asking
   "is each emitted value actually present in the image?".
-- **MCP tool responses are unfiltered.** Tools exposed by enabled MCP
-  servers can return attacker-controlled text that flows into the
-  agent's context window with no size cap, no content-type sanitisation,
-  no HTML/script stripping. ADR-0007 documents the trust assumption.
-  Closing this gap is tracked as a Critical roadmap item ("Sanitise MCP
-  tool responses"). Mitigated today only by the
-  `MCP_ENABLED_SERVERS` allowlist gating *which servers* run.
-- **Semantic validity is not checked.** A fabricated-but-format-valid
-  SSN (`"999-99-9999"`) passes `validate_ssn`. We rely on citation
-  verification to catch that the value isn't actually in the document
-  body, but in vision mode (no citation) or with a paraphrased excerpt
-  (95% overlap), it slips through. Closing this is tracked under
-  "Tighten citation verification".
+- **MCP tool responses are sanitised but only at the text-channel layer.**
+  Each MCP tool now passes through `_SanitisingMCPTool` (added after this
+  ADR was first filed): each text content block is truncated to
+  `MCP_RESPONSE_TEXT_CAP = 8 KiB` and run through `redact_for_logs`
+  before reaching the agent's context window. Image / document / JSON
+  content blocks are NOT touched (capping image bytes corrupts them;
+  redacting JSON values risks breaking caller-side parsers). Indirect
+  prompt injection through image content from an MCP server remains the
+  responsibility of the upstream producer.
+- **Semantic validity is partially checked.** A fabricated-but-format-valid
+  SSN (`"999-99-9999"`) still passes `validate_ssn` itself, but the
+  citation layer now anchors on the field `value` as well as the
+  `source_excerpt`: `value_anchored_in_excerpt` (added after this ADR
+  was first filed) flags any string-valued field whose value is not
+  contained inside the verbatim excerpt that cited it. The retry loop's
+  new `value_anchor_failures` section asks the model to re-quote or
+  correct on the next attempt. Non-string values (numbers, booleans)
+  still skip the anchor check because validators legitimately normalise
+  them away from excerpt surface forms; a future "is this a real US SSN
+  in our database" check is out of scope.
 - **Persistent jailbreaks across the retry loop** are possible. The same
   adversarial `document_text` is re-rendered into each of the three
   attempts (initial + two retries; see ADR-0009), so a successful

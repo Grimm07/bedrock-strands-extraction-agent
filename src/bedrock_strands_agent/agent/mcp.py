@@ -2,7 +2,10 @@
 
 `MCPManager` reads `mcp.config.json`, validates the entries the user opted
 into via `MCP_ENABLED_SERVERS`, launches each over stdio, and exposes their
-tools so the Strands agent can call them.
+tools so the Strands agent can call them. Tool responses are passed through
+`_SanitisingMCPTool` so a compromised or attacker-controlled MCP server
+cannot paint unbounded text — including PII — into the agent's context
+window. See ADR-0011.
 """
 
 from __future__ import annotations
@@ -11,13 +14,103 @@ import json
 import logging
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Final, override
 
 from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 from strands.tools.mcp import MCPClient
+from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
+from strands.types._events import ToolResultEvent
+
+from bedrock_strands_agent.security.redaction import redact_for_logs
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from strands.types.tools import ToolResultContent, ToolUse
 
 LOGGER = logging.getLogger(__name__)
+
+# 8 KiB per individual MCP text-content block. Large enough for legit
+# lookups (vendor metadata, schema descriptions, fetch summaries); small
+# enough to bound the indirect-prompt-injection surface a compromised or
+# malicious MCP server can paint into the agent's context window. See
+# ADR-0011 ("MCP tool responses are unfiltered" deferral).
+MCP_RESPONSE_TEXT_CAP: Final = 8 * 1024
+_MCP_TRUNCATION_MARKER: Final = (
+    "\n\n[TRUNCATED — MCP response exceeded {cap}-character cap; trailing content dropped]"
+)
+
+
+def _sanitise_mcp_text_blocks(content: list[ToolResultContent], cap: int) -> None:
+    """In place: cap each text block's length and run it through redact_for_logs.
+
+    Non-text content (image, document, json) is left untouched: capping
+    image bytes would corrupt them, and redacting JSON would risk
+    breaking caller-side parsers. Indirect prompt injection through
+    image/document content is the responsibility of the upstream system
+    that produced the MCP server's reply; the text-channel hardening
+    covers the common `fetch` / `filesystem` / `vendor-lookup` shapes.
+    """
+    for block in content:
+        if not isinstance(block, dict):  # pragma: no cover - TypedDict invariant
+            continue
+        text = block.get("text")
+        if not isinstance(text, str):
+            continue
+        if len(text) > cap:
+            text = text[:cap] + _MCP_TRUNCATION_MARKER.format(cap=cap)
+        redacted = redact_for_logs(text)
+        if redacted is not None:
+            text = redacted
+        block["text"] = text
+
+
+class _SanitisingMCPTool(MCPAgentTool):
+    """MCPAgentTool subclass that bounds tool-response text and redacts PII.
+
+    Defence-in-depth against indirect prompt injection through MCP tool
+    responses (ADR-0011). The MCP_ENABLED_SERVERS allowlist controls
+    *which* servers run; this wrapper controls *what* their replies can
+    look like once they're talking.
+    """
+
+    @override
+    async def stream(
+        self,
+        tool_use: ToolUse,
+        invocation_state: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Sanitise text content blocks on every ``ToolResultEvent``."""
+        async for event in super().stream(tool_use, invocation_state, **kwargs):
+            if isinstance(event, ToolResultEvent):
+                result = event.tool_result
+                content = result.get("content") if isinstance(result, dict) else None
+                if isinstance(content, list):
+                    _sanitise_mcp_text_blocks(content, MCP_RESPONSE_TEXT_CAP)
+            yield event
+
+
+def _wrap_tools_with_sanitiser(tools: list[Any]) -> list[Any]:
+    """Replace each MCPAgentTool with a `_SanitisingMCPTool` instance.
+
+    Non-MCP tools (if any are present in the list) pass through unchanged.
+    """
+    out: list[Any] = []
+    for tool in tools:
+        if isinstance(tool, MCPAgentTool):
+            out.append(
+                _SanitisingMCPTool(
+                    mcp_tool=tool.mcp_tool,
+                    mcp_client=tool.mcp_client,
+                    name_override=tool.tool_name,
+                    timeout=tool.timeout,
+                )
+            )
+        else:
+            out.append(tool)
+    return out
 
 
 class MCPConfigError(ValueError):
@@ -66,7 +159,7 @@ class MCPManager:
                 )
             client = self._build_client(name, entry)
             self._stack.enter_context(client)
-            tools = client.list_tools_sync()
+            tools = _wrap_tools_with_sanitiser(client.list_tools_sync())
             self._tools.extend(tools)
             LOGGER.info("MCP server %s started with %d tool(s)", name, len(tools))
         self._started = True

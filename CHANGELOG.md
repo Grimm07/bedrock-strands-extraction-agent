@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase D — LLM-security defence-in-depth)
+
+- **Logging-side PII redaction filter** (`bedrock_strands_agent.logging._RedactionFilter`):
+  attaches to the root logger alongside the correlation-id filter, masks
+  US PII tokens (SSN, EIN, email, US phone, credit card, AWS / sk_ / pk_
+  keys) on both the formatted message AND any `extra={...}` attribute that
+  semgrep cannot statically see. Closes the HIGH appsec gap from ADR-0011
+  (Phase D4 was deferred from v0.1; now wired).
+- **MCP response sanitiser** (`agent.mcp._SanitisingMCPTool`,
+  `_wrap_tools_with_sanitiser`): every MCP tool's responses pass through a
+  `MCP_RESPONSE_TEXT_CAP=8 KiB` truncation + the same redaction patterns
+  before the model sees them. Defence-in-depth against indirect prompt
+  injection through compromised or attacker-controlled MCP servers.
+  Non-text content (image/document/json) passes through untouched.
+- **Value-anchored citation verification**
+  (`extraction.citations.value_anchored_in_excerpt`): closes the
+  schema-confusion gap from ADR-0011 where the model could emit a
+  verbatim `source_excerpt` from the document but a `value` invented out
+  of thin air. New `value_anchor_failures` list surfaces these to the
+  retry loop with a dedicated section in `templates/retry.j2` (v3.1.0)
+  asking the model to re-quote or correct. Non-string values
+  (numbers/booleans/null) skip the anchor check because validators
+  legitimately normalise them away from excerpt surface forms.
+
 ### Added (Phase D — LLM-security input-side hardening)
 
 - **Prompt-injection threat model** ([ADR-0011](docs/adr/0011-prompt-injection-threat-model.md))

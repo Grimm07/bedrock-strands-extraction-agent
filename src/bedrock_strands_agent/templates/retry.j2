@@ -1,4 +1,4 @@
-{# template_version: 3.0.0 #}
+{# template_version: 3.1.0 #}
 Your previous response could not be accepted.
 
 {% if validation_errors %}
@@ -17,6 +17,15 @@ These source_excerpt values do NOT appear verbatim in the document:
 These values match the schema pattern but failed semantic validation:
 {% for vf in validator_failures %}
 - field "{{ vf.name }}" value {{ vf.value | tojson }}: {{ vf.reason }}
+{% endfor %}
+{% endif %}
+{% if value_anchor_failures %}
+These source_excerpt values are verbatim from the document, but the value
+you emitted is NOT contained inside the excerpt. Either re-quote a longer
+excerpt that actually contains the value, or correct the value to one
+that genuinely appears in the document:
+{% for af in value_anchor_failures %}
+- field "{{ af.name }}": value {{ af.value | tojson }} is not present in excerpt "{{ af.excerpt[:120] }}"
 {% endfor %}
 {% endif %}
 

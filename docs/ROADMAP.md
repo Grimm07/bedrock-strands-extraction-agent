@@ -33,6 +33,17 @@ was scoped out of an earlier release to keep that release reviewable.
   `asyncio.to_thread`, so the Bedrock round-trip no longer blocks the
   FastAPI event loop. The threadpool unblocks the loop today; native
   async via `Agent.invoke_async` is reserved for the streaming path.
+- **LLM-security defence-in-depth (Critical follow-ons to ADR-0011)**:
+  (a) `bedrock_strands_agent.logging._RedactionFilter` masks US PII on every
+  log record's formatted message AND `extra={...}` attributes (closes the
+  HIGH appsec gap; Phase D4 wired). (b) MCP tool responses pass through
+  `_SanitisingMCPTool` which truncates each text content block to 8 KiB
+  and redacts PII before the model sees it (closes the indirect-injection
+  gap from ADR-0007). (c) Citation verification now anchors on the field
+  `value` itself, not just the `source_excerpt` — `value_anchored_in_excerpt`
+  catches the schema-confusion case where the excerpt is real but the
+  value is fabricated. The retry prompt grew a dedicated section so the
+  model can re-quote or correct.
 - **Prompt-injection input-side hardening** ([ADR-0011](adr/0011-prompt-injection-threat-model.md)):
   `<document>...</document>` XML wrapper replaces the triple-quote delimiter
   in `extract.j2` / `retry.j2`; `system.j2` and `extract_image.j2` carry an

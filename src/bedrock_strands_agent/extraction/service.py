@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 
 from bedrock_strands_agent.agent.bedrock_retry import invoke_with_retry
-from bedrock_strands_agent.extraction.citations import verify_excerpt
+from bedrock_strands_agent.extraction.citations import value_anchored_in_excerpt, verify_excerpt
 from bedrock_strands_agent.extraction.confidence import (
     compute_field_confidence,
     compute_overall,
@@ -39,6 +39,7 @@ from bedrock_strands_agent.extraction.document import (
 from bedrock_strands_agent.extraction.models import (
     ExtractedField,
     ExtractionResult,
+    FieldType,
     FormSchema,
 )
 from bedrock_strands_agent.extraction.multimodal import invoke_multimodal
@@ -57,6 +58,15 @@ LOGGER = logging.getLogger(__name__)
 _TRACER = trace.get_tracer("bedrock_strands_agent.extraction")
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+
+# Field types whose validators legitimately rewrite the model's emitted value
+# into a canonical form that won't substring-match the document surface form
+# (e.g. ``"January 15, 2026"`` in the doc -> ``value="2026-01-15"``). The
+# value-anchored citation check (ADR-0011) is skipped for these because it
+# would false-positive on the happy path. Non-string types are already skipped
+# inside ``value_anchored_in_excerpt`` itself; this set is only for the
+# string-returning normalising types.
+_NORMALISING_STRING_TYPES: frozenset[FieldType] = frozenset({FieldType.DATE})
 
 
 class ExtractionError(RuntimeError):
@@ -180,7 +190,7 @@ class ExtractionService:
                 }
                 return
 
-            fields, warnings, _, _ = self._coerce_fields(
+            fields, warnings, _, _, _ = self._coerce_fields(
                 payload, schema, document_text=document_text
             )
             elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -309,6 +319,7 @@ class ExtractionService:
             previous_validation_errors: list[str] = []
             previous_citation_failures: list[dict[str, Any]] = []
             previous_validator_failures: list[dict[str, Any]] = []
+            previous_value_anchor_failures: list[dict[str, Any]] = []
 
             for attempt in range(self._max_retries + 1):
                 with _TRACER.start_as_current_span(
@@ -319,12 +330,14 @@ class ExtractionService:
                     else:
                         span.set_attribute("extraction.retry_attempt", attempt)
                         LOGGER.warning(
-                            "Re-prompting after validation issues "
-                            "(mode=%s): errors=%d citation_fails=%d validator_fails=%d",
+                            "Re-prompting after validation issues (mode=%s): "
+                            "errors=%d citation_fails=%d validator_fails=%d "
+                            "value_anchor_fails=%d",
                             mode,
                             len(previous_validation_errors),
                             len(previous_citation_failures),
                             len(previous_validator_failures),
+                            len(previous_value_anchor_failures),
                         )
                         retry_prompt = self._bundle.prompt_renderer.retry(
                             schema=schema,
@@ -332,6 +345,7 @@ class ExtractionService:
                             validation_errors=previous_validation_errors,
                             citation_failures=previous_citation_failures,
                             validator_failures=previous_validator_failures,
+                            value_anchor_failures=previous_value_anchor_failures,
                         )
                         raw = invoke_fn(retry_prompt)
 
@@ -341,19 +355,31 @@ class ExtractionService:
                         previous_validation_errors = [f"Could not parse JSON from response: {exc}"]
                         previous_citation_failures = []
                         previous_validator_failures = []
+                        previous_value_anchor_failures = []
                         sub_span.add_event("attempt.failed", {"reason": "json-parse-failed"})
                         continue
 
-                    fields, warnings, citation_failures, validator_failures = self._coerce_fields(
-                        payload, schema, document_text=document_text
-                    )
+                    (
+                        fields,
+                        warnings,
+                        citation_failures,
+                        validator_failures,
+                        value_anchor_failures,
+                    ) = self._coerce_fields(payload, schema, document_text=document_text)
                     sub_span.set_attribute("attempt.warnings", len(warnings))
                     sub_span.set_attribute("attempt.citation_failures", len(citation_failures))
                     sub_span.set_attribute("attempt.validator_failures", len(validator_failures))
+                    sub_span.set_attribute(
+                        "attempt.value_anchor_failures", len(value_anchor_failures)
+                    )
 
                     fatal = [w for w in warnings if w.startswith("MISSING_REQUIRED:")]
                     is_last_attempt = attempt == self._max_retries
-                    if not fatal or is_last_attempt:
+                    # Value-anchor failures are also fatal — they indicate
+                    # fabricated values with verbatim citations, the schema-
+                    # confusion attack documented in ADR-0011.
+                    has_anchor_failure = bool(value_anchor_failures)
+                    if (not fatal and not has_anchor_failure) or is_last_attempt:
                         elapsed_ms = int((time.perf_counter() - started) * 1000)
                         span.set_attribute("extraction.latency_ms", elapsed_ms)
                         span.set_attribute("extraction.field_count", len(fields))
@@ -375,6 +401,7 @@ class ExtractionService:
                     previous_validation_errors = fatal
                     previous_citation_failures = citation_failures
                     previous_validator_failures = validator_failures
+                    previous_value_anchor_failures = value_anchor_failures
 
             raise ExtractionError(
                 "Extraction failed after retries: " + "; ".join(previous_validation_errors)
@@ -419,16 +446,24 @@ class ExtractionService:
         list[str],
         list[dict[str, Any]],
         list[dict[str, Any]],
+        list[dict[str, Any]],
     ]:
-        """Project ``payload['fields']`` onto the schema, returning four lists.
+        """Project ``payload['fields']`` onto the schema, returning five lists.
 
         Citation verification is skipped when ``document_text`` is empty
-        (vision mode); ``citation_failures`` will always be empty in that
-        case and per-field ``citation_verified`` stays ``False``.
+        (vision mode); ``citation_failures`` and ``value_anchor_failures``
+        will always be empty in that case and per-field
+        ``citation_verified`` stays ``False``.
+
+        ``value_anchor_failures`` catches the schema-confusion case
+        flagged in ADR-0011: the model returned a verbatim
+        ``source_excerpt`` (passes :func:`verify_excerpt`) but invented
+        a ``value`` that is nowhere inside that excerpt.
         """
         warnings: list[str] = []
         citation_failures: list[dict[str, Any]] = []
         validator_failures: list[dict[str, Any]] = []
+        value_anchor_failures: list[dict[str, Any]] = []
 
         fields_node = payload.get("fields")
         if not isinstance(fields_node, list):
@@ -451,6 +486,11 @@ class ExtractionService:
                 continue
 
             value = raw.get("value")
+            # Capture the original (pre-normalisation) value so the citation
+            # value-anchor check below compares the model's *emitted* string
+            # against the source excerpt, not the validator's canonical form
+            # (which legitimately differs, e.g. date "Jan 15, 2026" -> "2026-01-15").
+            raw_value = value
             model_self = float(raw.get("confidence", 0.0) or 0.0)
             model_self = max(0.0, min(1.0, model_self))
             raw_excerpt = raw.get("source_excerpt")
@@ -495,6 +535,26 @@ class ExtractionService:
                             "overlap_pct": cc.overlap_pct,
                         }
                     )
+                # Even when the excerpt itself appears verbatim in the doc, the
+                # emitted value must be anchored inside that excerpt (otherwise
+                # the model fabricated the value while citing real surrounding
+                # text). Non-string values skip this check inside
+                # `value_anchored_in_excerpt`; we additionally skip for field
+                # types whose validators legitimately rewrite the surface form
+                # (e.g. DATE: doc says "January 15, 2026", value="2026-01-15").
+                if (
+                    cc.verbatim
+                    and spec.type not in _NORMALISING_STRING_TYPES
+                    and not value_anchored_in_excerpt(raw_value, excerpt)
+                ):
+                    citation_verified = False
+                    value_anchor_failures.append(
+                        {
+                            "name": spec.name,
+                            "excerpt": excerpt,
+                            "value": raw_value,
+                        }
+                    )
 
             calibrated = compute_field_confidence(
                 model_self,
@@ -511,4 +571,4 @@ class ExtractionService:
                     source_excerpt=excerpt,
                 )
             )
-        return out, warnings, citation_failures, validator_failures
+        return out, warnings, citation_failures, validator_failures, value_anchor_failures
