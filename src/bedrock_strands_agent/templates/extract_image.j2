@@ -1,0 +1,26 @@
+{# template_version: 1.0.0 #}
+Extract the following fields from the attached document image(s) according
+to schema "{{ schema.name }}" (version {{ schema.version }}).
+
+Schema description:
+{{ schema.description }}
+
+Fields to extract (return one entry per field in the same order):
+{% for field in schema.fields %}
+- name: {{ field.name }}
+  type: {{ field.type.value }}
+  required: {{ "yes" if field.required else "no" }}
+  description: {{ field.description }}
+  {% if field.pattern %}pattern: {{ field.pattern }}{% endif %}
+  {% if field.examples %}examples: {{ field.examples | join(", ") }}{% endif %}
+{% endfor %}
+
+Read the attached image(s) directly. Do not transcribe entire pages. Extract
+only the field values defined by the schema. When a value is not visible in
+the image, return null and lower the confidence accordingly.
+
+Respond with a single JSON object of the form:
+{"fields": [{"name": "<schema field name>", "value": <string|number|boolean|null>,
+             "confidence": <0..1>, "source_excerpt": "<short verbatim string from the image>"}]}
+
+Do not wrap the JSON in code fences. Do not include any other text.

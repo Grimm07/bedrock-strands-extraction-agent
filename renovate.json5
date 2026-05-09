@@ -1,0 +1,50 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    ":semanticCommits",
+    ":timezone(America/Chicago)",
+  ],
+  schedule: ["before 6am on monday"],
+  prHourlyLimit: 4,
+  prConcurrentLimit: 8,
+  rangeStrategy: "bump",
+  // PEP 621 (pyproject.toml) is the source of truth; uv.lock is regenerated via
+  // the postUpdateOptions hook. Dependabot is intentionally out of scope for pip
+  // because it cannot reconcile uv.lock and `uv sync --frozen` in CI rejects
+  // unreconciled PRs.
+  pep621: { enabled: true },
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 6am on monday"],
+  },
+  postUpdateOptions: ["uvLockFile"],
+  packageRules: [
+    {
+      matchPackagePatterns: ["^strands-"],
+      groupName: "strands",
+    },
+    {
+      matchPackagePatterns: ["^opentelemetry-"],
+      groupName: "otel",
+    },
+    {
+      matchPackagePatterns: ["^boto3", "^botocore", "^boto3-stubs"],
+      groupName: "aws",
+    },
+    {
+      matchDepTypes: ["dev"],
+      matchUpdateTypes: ["patch"],
+      automerge: true,
+      automergeType: "branch",
+    },
+    {
+      matchManagers: ["dockerfile"],
+      groupName: "docker",
+    },
+  ],
+  vulnerabilityAlerts: {
+    enabled: true,
+    labels: ["security"],
+  },
+}

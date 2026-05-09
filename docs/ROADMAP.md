@@ -1,8 +1,28 @@
 # Roadmap
 
-This file tracks intentional gaps in the v0.1 scaffold. Each item is something
-that would meaningfully harden or extend the service for a real production
-deploy but was scoped out to keep v0.1 reviewable.
+This file tracks intentional gaps. Each item is something that would
+meaningfully harden or extend the service for a real production deploy but
+was scoped out of an earlier release to keep that release reviewable.
+
+## Released in 0.2.0 (Phase A + Phase C partial)
+
+- Pre-commit, gitleaks, semgrep custom rules, Renovate (replaces Dependabot
+  for pip+docker), `.devcontainer`, k6 load test, mkdocs site, ADRs 0001–0004
+  + 0008, runbooks, SLO doc.
+- Service hardening: FastAPI auth middleware (apikey / Cognito JWT / both),
+  slowapi rate-limiting, tenacity-backed Bedrock retry. v0.2 ROADMAP items
+  pulled forward.
+- Accuracy: PII redaction module, prompt template versioning, validators
+  refactored into `extraction.validators`, citation verification via
+  `extraction.citations`, weighted overall-confidence calibration
+  ([ADR-0004](adr/0004-confidence-calibration.md)), multi-shot self-
+  correcting retry that surfaces validator + citation failures back to the
+  model.
+- **Document upload + multimodal vision path**
+  ([ADR-0008](adr/0008-extraction-modes-text-vs-vision.md)):
+  `POST /extract/document` accepts PDF (text via pypdf) or image
+  (PNG/JPEG/WebP/GIF → Bedrock Converse multimodal). No separate OCR
+  engine. Pulled forward from the v0.3 deferral.
 
 ## Shipped in v0.1
 

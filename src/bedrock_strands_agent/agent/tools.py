@@ -1,23 +1,22 @@
 """Strands tools exposed to the agent.
 
-Each tool is a `@tool`-decorated function with a Google-style docstring; the
-Strands runtime introspects the docstring to populate the tool spec. Tests can
-call the underlying callable via `getattr(tool, "func", tool)`.
+Each tool is a ``@tool``-decorated function with a Google-style docstring;
+the Strands runtime introspects the docstring to populate the tool spec.
+Tests can call the underlying callable via ``getattr(tool, "func", tool)``.
+
+Validation logic lives in :mod:`bedrock_strands_agent.extraction.validators`
+so the service-side ``_coerce_fields`` pass and the model-facing ``@tool``
+shims share a single source of truth (Phase C4).
 """
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, date, datetime
 
 from strands import tool
 
+from bedrock_strands_agent.extraction import validators
 from bedrock_strands_agent.extraction.schemas import SCHEMA_REGISTRY, get_schema
-
-_SSN_RE = re.compile(r"^\d{3}-\d{2}-\d{4}$")
-_EIN_RE = re.compile(r"^\d{2}-\d{7}$")
-_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
-_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y", "%d %B %Y")
 
 
 @tool
@@ -74,7 +73,7 @@ def validate_ssn(value: str) -> bool:
     Returns:
         True if `value` matches the expected pattern, False otherwise.
     """
-    return bool(_SSN_RE.match(value or ""))
+    return validators.is_ssn(value or "")
 
 
 @tool
@@ -87,7 +86,7 @@ def validate_ein(value: str) -> bool:
     Returns:
         True if `value` matches the expected pattern, False otherwise.
     """
-    return bool(_EIN_RE.match(value or ""))
+    return validators.is_ein(value or "")
 
 
 @tool
@@ -100,7 +99,7 @@ def validate_email(value: str) -> bool:
     Returns:
         True if `value` matches a permissive email regex, False otherwise.
     """
-    return bool(_EMAIL_RE.match(value or ""))
+    return validators.is_email(value or "")
 
 
 @tool
@@ -119,14 +118,7 @@ def normalize_date(value: str) -> str:
     Raises:
         ValueError: if `value` is not in a recognised format.
     """
-    text = (value or "").strip()
-    for fmt in _DATE_FORMATS:
-        try:
-            parsed = datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-        return parsed.isoformat()
-    raise ValueError(f"could not parse {value!r} as a date")
+    return validators.normalize_date(value)
 
 
 @tool

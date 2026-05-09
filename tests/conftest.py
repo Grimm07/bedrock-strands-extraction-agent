@@ -25,7 +25,17 @@ from bedrock_strands_agent.config import Settings, reset_settings_cache
 from bedrock_strands_agent.extraction import ExtractionService
 from bedrock_strands_agent.telemetry import reset_for_tests as _reset_telemetry
 
-_LEAKY_PREFIXES = ("AWS_", "OTEL_", "STRANDS_OTEL_", "MCP_", "BEDROCK_")
+_LEAKY_PREFIXES = (
+    "AWS_",
+    "OTEL_",
+    "STRANDS_OTEL_",
+    "MCP_",
+    "BEDROCK_",
+    "AUTH_",
+    "JWT_",
+    "API_KEYS",
+    "RATE_LIMIT_",
+)
 
 
 @pytest.fixture(autouse=True)

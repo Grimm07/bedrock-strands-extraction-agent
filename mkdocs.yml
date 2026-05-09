@@ -1,0 +1,55 @@
+site_name: bedrock-strands-agent
+site_description: Form-extraction agent built on Strands + Amazon Bedrock.
+site_url: https://your-org.github.io/bedrock-strands-agent/
+repo_url: https://github.com/your-org/bedrock-strands-agent
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+
+exclude_docs: |
+  adr/template.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_signature_annotations: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.snippets
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Roadmap: ROADMAP.md
+  - Contributing: CONTRIBUTING.md
+  - Service Level Objectives: slos.md
+  - Architecture decisions:
+      - Index: adr/README.md
+      - "0001 — Strands SDK": adr/0001-strands-sdk-over-langchain.md
+      - "0002 — Schema-first extraction": adr/0002-schema-first-extraction-with-self-correcting-retry.md
+      - "0003 — AgentCore deployment (proposed)": adr/0003-agentcore-full-platform-deployment.md
+  - Runbooks:
+      - On-call: runbooks/oncall.md
+      - Bedrock throttling: runbooks/bedrock-throttling.md
+      - /extract 502 spike: runbooks/extraction-error-spike.md
+      - Auth misconfig: runbooks/auth-misconfig.md
+  - API reference: api.md

@@ -15,6 +15,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pre-commit:
+    name: Pre-commit (parity with local hooks)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-groups --frozen
+      - uses: pre-commit/action@v3.0.1
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
@@ -78,7 +90,7 @@ jobs:
   build-image:
     name: Build & scan image
     runs-on: ubuntu-24.04
-    needs: [lint, typecheck, test]
+    needs: [pre-commit, lint, typecheck, test]
     permissions:
       contents: read
       security-events: write

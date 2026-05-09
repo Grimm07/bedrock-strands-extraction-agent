@@ -1,8 +1,24 @@
-Your previous response could not be accepted. The validator reported:
+{# template_version: 2.0.0 #}
+Your previous response could not be accepted.
 
-{% for error in errors %}
+{% if validation_errors %}
+Structural / required-field issues:
+{% for error in validation_errors %}
 - {{ error }}
 {% endfor %}
+{% endif %}
+{% if citation_failures %}
+These source_excerpt values do NOT appear verbatim in the document:
+{% for cf in citation_failures %}
+- field "{{ cf.name }}": excerpt "{{ cf.excerpt[:80] }}" - best overlap {{ cf.overlap_pct }}%
+{% endfor %}
+{% endif %}
+{% if validator_failures %}
+These values match the schema pattern but failed semantic validation:
+{% for vf in validator_failures %}
+- field "{{ vf.name }}" value {{ vf.value | tojson }}: {{ vf.reason }}
+{% endfor %}
+{% endif %}
 
 Please re-emit a corrected JSON object for schema "{{ schema.name }}".
 Fix only the issues listed above; keep the rest of your prior values

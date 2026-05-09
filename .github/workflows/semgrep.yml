@@ -1,0 +1,37 @@
+name: semgrep
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * 1'  # Monday 05:17 UTC
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-24.04
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep (community packs + project rules)
+        # The `|| true` is intentional during the soft-launch window so a
+        # community-pack rule update can't surprise us. Flip to mandatory
+        # (drop `|| true`) after one Renovate cycle confirms a clean baseline.
+        run: |
+          semgrep ci \
+            --config=p/python \
+            --config=p/owasp-top-ten \
+            --config=p/jwt \
+            --config=p/secrets \
+            --config=.semgrep.yml \
+            --sarif --output=semgrep.sarif || true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif

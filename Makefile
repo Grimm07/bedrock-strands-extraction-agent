@@ -6,7 +6,7 @@ PORT ?= 8000
 .DEFAULT_GOAL := help
 
 .PHONY: help install lock sync run dev test cov lint format typecheck scan audit \
-        clean docker-build docker-run check ci
+        hooks load-test clean docker-build docker-run check ci
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -48,6 +48,10 @@ typecheck: ## Run mypy strict
 scan: ## Bandit security scan
 	$(UV) run bandit -c pyproject.toml -r src
 
+hooks: ## Install + run pre-commit on all files (parity with the CI pre-commit job)
+	$(UV) run pre-commit install --install-hooks
+	$(UV) run pre-commit run --all-files
+
 audit: ## pip-audit against the synced venv, skipping the editable project itself
 	# Auditing the live venv (instead of -r requirements.txt) avoids:
 	#   * "Dependency not found on PyPI" for the editable project
@@ -55,6 +59,13 @@ audit: ## pip-audit against the synced venv, skipping the editable project itsel
 	#     ensurepip on uv-managed Python builds
 	# --skip-editable drops the editable project from the audit set.
 	$(UV) run pip-audit --skip-editable --progress-spinner=off
+
+load-test: ## Run k6 load test (set BASE_URL/API_KEY for non-localhost)
+	docker run --rm -i \
+		-e BASE_URL=$${BASE_URL:-http://host.docker.internal:8000} \
+		-e API_KEY=$${API_KEY:-} \
+		-v $(PWD)/tests/load:/scripts \
+		grafana/k6 run /scripts/extract.js
 
 clean: ## Remove caches and build artefacts
 	rm -rf .ruff_cache .mypy_cache .pytest_cache .coverage coverage.xml htmlcov \
@@ -66,6 +77,6 @@ docker-build: ## Build container image
 docker-run: ## Run container locally
 	docker run --rm -p $(PORT):8000 --env-file .env $(IMAGE)
 
-check: lint typecheck test scan ## Full local quality gate
+check: lint typecheck test scan hooks ## Full local quality gate
 
 ci: install check audit ## CI-equivalent run

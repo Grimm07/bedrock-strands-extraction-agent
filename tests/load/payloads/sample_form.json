@@ -1,0 +1,12 @@
+[
+  {
+    "schema_name": "irs_w9",
+    "document_text": "FORM W-9\nRequest for Taxpayer Identification Number and Certification\n\n1. Name: Acme Widgets, Inc.\n2. Business name: Acme Widgets Manufacturing\n3. Federal tax classification: C Corporation\n4. Address: 123 Industry Way\n5. City, state, ZIP: Springfield, IL 62701\n\nPart I — Taxpayer Identification Number\nSocial Security Number: 123-45-6789\nEmployer Identification Number: 12-3456789\n\nPart II — Certification\nSignature date: 2026-04-30\n",
+    "document_id": "k6-w9-001"
+  },
+  {
+    "schema_name": "invoice",
+    "document_text": "INVOICE #INV-001\nDate: 2026-04-15\nVendor: Acme\nBill to: Wile E. Coyote\nLine 1: Anvil — $100\nTotal: $100\n",
+    "document_id": "k6-inv-001"
+  }
+]

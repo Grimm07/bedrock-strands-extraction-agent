@@ -9,9 +9,14 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from bedrock_strands_agent import __version__
+from bedrock_strands_agent.api.auth import AuthMiddleware
 from bedrock_strands_agent.api.middleware import CorrelationIdMiddleware
+from bedrock_strands_agent.api.ratelimit import build_limiter, rate_limit_string
 from bedrock_strands_agent.api.routes import build_router
 from bedrock_strands_agent.api.schemas import ErrorResponse
 from bedrock_strands_agent.config import Settings, get_settings
@@ -72,8 +77,31 @@ def create_app(
     app.state.settings = settings
     app.state.extraction_service = extraction_service or ExtractionService.from_settings(settings)
 
+    # Rate limiter must exist on app.state before SlowAPIMiddleware is wired,
+    # even when disabled, so route decorators can reference it unconditionally.
+    limiter = build_limiter(settings)
+    app.state.limiter = limiter
+    # slowapi's handler is typed as Callable[[Request, RateLimitExceeded], Response];
+    # Starlette's signature wants the exception param typed as Exception. The
+    # contravariance gap is a long-standing slowapi typing quirk, not a real bug.
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+    # Middleware stack is LIFO: the last add_middleware runs FIRST on request.
+    # We want the chain to be:
+    #   request -> CorrelationIdMiddleware (sets correlation_id)
+    #           -> AuthMiddleware (reads correlation_id for 401 bodies)
+    #           -> SlowAPIMiddleware (route-level @limit decorators apply)
+    #           -> route handler
+    app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(AuthMiddleware, settings=settings)
     app.add_middleware(CorrelationIdMiddleware)
-    app.include_router(build_router())
+
+    app.include_router(
+        build_router(
+            limiter=limiter,
+            rate_limit=rate_limit_string(settings) if settings.rate_limit_enabled else None,
+        )
+    )
 
     Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
     instrument_fastapi(app)

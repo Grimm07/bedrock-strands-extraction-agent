@@ -1,0 +1,39 @@
+{
+  "name": "bedrock-strands-agent",
+  "build": { "dockerfile": "Dockerfile" },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "make install && make hooks",
+  "forwardPorts": [8000, 16686, 4317, 4318],
+  "portsAttributes": {
+    "8000":  { "label": "FastAPI" },
+    "16686": { "label": "Jaeger UI" },
+    "4317":  { "label": "OTLP gRPC" },
+    "4318":  { "label": "OTLP HTTP" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-python.mypy-type-checker",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "GitHub.vscode-github-actions",
+        "EditorConfig.EditorConfig"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": ".venv/bin/python",
+        "ruff.importStrategy": "fromEnvironment",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}

@@ -1,0 +1,44 @@
+rules:
+  - id: no-print-of-document-text
+    message: |
+      document_text must never be print()ed or logged. It is the model's input and
+      may contain PII (SSN, EIN, email). Spans + logs go through redact_for_logs;
+      print() bypasses that. Remove the call or route the value through the
+      bedrock_strands_agent.security.redaction module.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: print(..., $X.document_text, ...)
+      - pattern: print($X.document_text)
+      - pattern: logger.$LEVEL(..., $X.document_text, ...)
+      - pattern: $LOGGER.$LEVEL(..., $X.document_text, ...)
+      - pattern: LOGGER.$LEVEL(..., $X.document_text, ...)
+
+  - id: no-fstring-in-jinja-render
+    message: |
+      Build prompt strings via Jinja2 templates (templates/*.j2), not f-strings.
+      Templates are loaded with StrictUndefined and a controlled autoescape policy;
+      f-strings bypass both and silently produce malformed prompts.
+    severity: WARNING
+    languages: [python]
+    pattern-either:
+      - pattern: $TPL.render(f"...")
+      - pattern: jinja2.Template(f"...")
+      - pattern: Template(f"...")
+
+  - id: bedrock-call-must-be-retry-wrapped
+    message: |
+      Direct calls to BedrockModel.converse / invoke_model / Agent must go through
+      bedrock_strands_agent.agent.bedrock_retry.invoke_with_retry so transient
+      ThrottlingException / ServiceQuotaExceededException / 5xx errors get
+      exponential-jitter backoff and emit retry span events.
+    severity: ERROR
+    languages: [python]
+    paths:
+      exclude:
+        - "src/bedrock_strands_agent/agent/bedrock_retry.py"
+        - "tests/**"
+    pattern-either:
+      - pattern: $MODEL.converse(...)
+      - pattern: $CLIENT.invoke_model(...)
+      - pattern: $CLIENT.invoke_model_with_response_stream(...)

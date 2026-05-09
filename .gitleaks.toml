@@ -1,0 +1,30 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Template files, fixtures, Bedrock model IDs, and PII-redaction test strings"
+paths = [
+  '''\.env\.example$''',
+  '''docs/.*''',
+  '''tests/fixtures/.*''',
+  # The redaction-test file deliberately contains AKIA-shaped and sk_live_-
+  # shaped strings to verify the masking patterns; they are obvious test
+  # values, not real credentials. Same for the multimodal-test file's
+  # response-byte fixtures.
+  '''tests/test_redaction\.py$''',
+  '''tests/test_multimodal\.py$''',
+  # The extraction-modes design doc and ADR mention key shapes inline as
+  # examples of what the redactor matches.
+  '''docs/extraction-modes\.md$''',
+  '''docs/adr/0008-extraction-modes-text-vs-vision\.md$''',
+  # The semgrep rule list documents shapes it deliberately scans for.
+  '''\.semgrep\.yml$''',
+  # The redaction module's docstring lists the patterns it catches.
+  '''src/bedrock_strands_agent/security/redaction\.py$''',
+]
+# Bedrock model IDs include "anthropic.claude" plus base64-ish suffixes that can
+# trip the generic-api-key rule. Allow them explicitly.
+regexes = [
+  '''us\.anthropic\.claude-[a-z0-9.\-]+''',
+  '''anthropic\.claude-[a-z0-9.\-]+''',
+]

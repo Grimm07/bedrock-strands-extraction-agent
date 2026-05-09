@@ -70,11 +70,32 @@ class Settings(BaseSettings):
     mcp_enabled_servers: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_config_path: Path = Field(default=Path("mcp.config.json"))
 
+    # Auth ------------------------------------------------------------------
+    auth_mode: Literal["none", "apikey", "jwt", "both"] = Field(default="none")
+    api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    jwt_issuer: str | None = Field(default=None)
+    jwt_audience: str | None = Field(default=None)
+    jwt_jwks_url: str | None = Field(default=None)
+    auth_excluded_paths: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "/health",
+            "/metrics",
+            "/docs",
+            "/openapi.json",
+            "/redoc",
+        ],
+    )
+
+    # Rate limiting ---------------------------------------------------------
+    rate_limit_enabled: bool = Field(default=False)
+    rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
+    rate_limit_burst: int = Field(default=10, ge=1, le=10_000)
+
     # ------------------------------------------------------------------ #
-    @field_validator("mcp_enabled_servers", mode="before")
+    @field_validator("mcp_enabled_servers", "api_keys", "auth_excluded_paths", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
-        """Accept a CSV string for `MCP_ENABLED_SERVERS`."""
+        """Accept a CSV string for list-valued env vars."""
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
