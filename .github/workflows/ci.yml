@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-groups --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-groups --frozen
+      - run: uv run mypy
+
+  test:
+    name: Test (py${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --all-groups --frozen
+      - run: uv run pytest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.python }}
+          path: coverage.xml
+
+  security-scan:
+    name: Security scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-groups --frozen
+      - run: uv run bandit -c pyproject.toml -r src
+      - name: pip-audit (skip editable project)
+        run: uv run pip-audit --skip-editable --progress-spinner=off
+
+  build-image:
+    name: Build & scan image
+    runs-on: ubuntu-24.04
+    needs: [lint, typecheck, test]
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: bedrock-strands-agent:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: bedrock-strands-agent:ci
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif

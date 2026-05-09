@@ -1,0 +1,206 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bedrock-strands-agent"
+version = "0.1.0"
+description = "Form-extraction agent built on the Strands Agents SDK with Amazon Bedrock."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+authors = [
+    { name = "bedrock-strands-agent contributors" },
+]
+keywords = ["bedrock", "strands", "agent", "extraction", "form", "mcp", "fastapi"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "strands-agents>=0.1.0",
+    "strands-agents-tools>=0.1.0",
+    "boto3>=1.35.0",
+    "botocore>=1.35.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.7.0",
+    "jinja2>=3.1.4",
+    "mcp>=1.0.0",
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-botocore>=0.48b0",
+    "prometheus-client>=0.21.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
+    "python-json-logger>=3.2.0",
+    "pypdf>=5.1.0",
+    "pillow>=11.0.0",
+]
+
+[project.scripts]
+bedrock-strands-agent = "bedrock_strands_agent.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/your-org/bedrock-strands-agent"
+Repository = "https://github.com/your-org/bedrock-strands-agent"
+Issues = "https://github.com/your-org/bedrock-strands-agent/issues"
+Changelog = "https://github.com/your-org/bedrock-strands-agent/blob/main/CHANGELOG.md"
+
+# ---------------------------------------------------------------------------
+# Dependency groups (PEP 735) — dev tools, picked up by `uv sync --group dev`
+# and by `--all-groups` automatically in `uv sync --all-extras --all-groups`.
+# ---------------------------------------------------------------------------
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    "httpx>=0.28.0",
+    "respx>=0.21.1",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "types-jinja2>=2.11.9",
+    "boto3-stubs[bedrock-runtime,bedrock-agent-runtime]>=1.35.0",
+    "bandit[toml]>=1.8.0",
+    "pip-audit>=2.7.3",
+]
+
+# ---------------------------------------------------------------------------
+# Hatch / wheel layout
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src/bedrock_strands_agent"]
+# NOTE: Do NOT add a [tool.hatch.build.targets.wheel.force-include] entry
+# for templates/. They already ship via the package directory; adding a
+# force-include creates a "Duplicate name" warning at wheel build time.
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src",
+    "tests",
+    "docker",
+    "docs",
+    "scripts",
+    "mcp.config.json",
+    "Makefile",
+    "Dockerfile",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+# ---------------------------------------------------------------------------
+# Pytest / coverage
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=bedrock_strands_agent",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+]
+markers = [
+    "integration: requires live AWS Bedrock credentials (deselected by default)",
+    "slow: tests that take more than 1s",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:botocore.*",
+    "ignore::DeprecationWarning:google.*",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/bedrock_strands_agent"]
+omit = ["src/bedrock_strands_agent/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "pragma: no cover",
+    "def __repr__",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "B", "C4", "UP", "SIM", "RUF",
+    "S", "D", "ANN", "ASYNC", "PT", "RET", "TRY", "PERF",
+]
+ignore = [
+    "D100", "D104", "D105", "D107",
+    "D203", "D213",
+    "ANN401",
+    "TRY003",
+    "B008",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D", "S", "ANN", "PT011", "PLR2004"]
+"src/bedrock_strands_agent/__main__.py" = ["T201"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_any_generics = true
+no_implicit_optional = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["strands.*", "mcp.*", "strands_tools.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# ---------------------------------------------------------------------------
+# Bandit
+# ---------------------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "build", "dist"]
+skips = ["B101"]

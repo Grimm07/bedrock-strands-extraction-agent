@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      strands:
+        patterns:
+          - "strands-*"
+      otel:
+        patterns:
+          - "opentelemetry-*"
+      aws:
+        patterns:
+          - "boto3*"
+          - "botocore*"
+          - "boto3-stubs*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"

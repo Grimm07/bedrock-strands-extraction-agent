@@ -1,0 +1,15 @@
+FORM W-9
+Request for Taxpayer Identification Number and Certification
+
+1. Name: Acme Widgets, Inc.
+2. Business name: Acme Widgets Manufacturing
+3. Federal tax classification: C Corporation
+4. Address: 123 Industry Way
+5. City, state, ZIP: Springfield, IL 62701
+
+Part I — Taxpayer Identification Number
+Social Security Number: 123-45-6789
+Employer Identification Number: 12-3456789
+
+Part II — Certification
+Signature date: 2026-04-30

@@ -1,0 +1,20 @@
+Your previous response could not be accepted. The validator reported:
+
+{% for error in errors %}
+- {{ error }}
+{% endfor %}
+
+Please re-emit a corrected JSON object for schema "{{ schema.name }}".
+Fix only the issues listed above; keep the rest of your prior values
+unchanged. Same output rules as before:
+
+- Single JSON object, no Markdown, no fences.
+- Top-level shape: {"fields": [{"name": ..., "value": ..., "confidence": ..., "source_excerpt": ...}]}
+- One entry per schema field, in declaration order.
+
+For reference, the document is repeated below.
+
+Document:
+"""
+{{ document_text }}
+"""

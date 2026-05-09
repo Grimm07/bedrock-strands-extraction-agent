@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${PWD}"
+      ],
+      "env": {}
+    },
+    "fetch": {
+      "transport": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "env": {}
+    }
+  }
+}

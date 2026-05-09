@@ -1,0 +1,26 @@
+Extract the following fields from the document according to schema
+"{{ schema.name }}" (version {{ schema.version }}).
+
+Schema description:
+{{ schema.description }}
+
+Fields to extract (return one entry per field in the same order):
+{% for field in schema.fields %}
+- name: {{ field.name }}
+  type: {{ field.type.value }}
+  required: {{ "yes" if field.required else "no" }}
+  description: {{ field.description }}
+  {% if field.pattern %}pattern: {{ field.pattern }}{% endif %}
+  {% if field.examples %}examples: {{ field.examples | join(", ") }}{% endif %}
+{% endfor %}
+
+Document:
+"""
+{{ document_text }}
+"""
+
+Respond with a single JSON object of the form:
+{"fields": [{"name": "<schema field name>", "value": <string|number|boolean|null>,
+             "confidence": <0..1>, "source_excerpt": "<short verbatim excerpt>"}]}
+
+Do not wrap the JSON in code fences. Do not include any other text.
