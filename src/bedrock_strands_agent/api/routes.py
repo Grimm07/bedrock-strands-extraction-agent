@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, s
 
 from bedrock_strands_agent import __version__
 from bedrock_strands_agent.api.schemas import (
+    ErrorResponse,
     ExtractRequestBody,
     HealthResponse,
     SchemasResponse,
@@ -92,6 +93,10 @@ def build_router(
         methods=["POST"],
         response_model=ExtractionResult,
         response_model_by_alias=True,
+        responses={
+            404: {"model": ErrorResponse, "description": "Unknown schema_name"},
+            502: {"model": ErrorResponse, "description": "Upstream Bedrock failure"},
+        },
         tags=["extraction"],
     )
 
@@ -135,6 +140,14 @@ def build_router(
         methods=["POST"],
         response_model=ExtractionResult,
         response_model_by_alias=True,
+        responses={
+            404: {"model": ErrorResponse, "description": "Unknown schema_name"},
+            422: {
+                "model": ErrorResponse,
+                "description": "Unsupported document type or unreadable file",
+            },
+            502: {"model": ErrorResponse, "description": "Upstream Bedrock failure"},
+        },
         tags=["extraction"],
     )
 

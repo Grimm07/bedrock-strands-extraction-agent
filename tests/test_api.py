@@ -206,3 +206,48 @@ def test_extract_document_invalid_image_returns_422(
             files={"file": ("test.png", b"definitely-not-a-png", "image/png")},
         )
     assert r.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# OpenAPI documents typed error bodies
+# --------------------------------------------------------------------------- #
+
+
+def _err_ref(response_entry: dict[str, object]) -> str | None:
+    """Return the $ref string for application/json on a response entry."""
+    content = response_entry.get("content") if isinstance(response_entry, dict) else None
+    if not isinstance(content, dict):
+        return None
+    media = content.get("application/json")
+    if not isinstance(media, dict):
+        return None
+    schema = media.get("schema")
+    if not isinstance(schema, dict):
+        return None
+    ref = schema.get("$ref")
+    return ref if isinstance(ref, str) else None
+
+
+def test_openapi_documents_error_responses_for_extract(
+    settings: Settings, stub_extraction_service: ExtractionService
+) -> None:
+    with _client(settings, stub_extraction_service) as c:
+        schema = c.get("/openapi.json").json()
+    responses = schema["paths"]["/extract"]["post"]["responses"]
+    assert "404" in responses
+    assert "502" in responses
+    assert _err_ref(responses["404"]) == "#/components/schemas/ErrorResponse"
+    assert _err_ref(responses["502"]) == "#/components/schemas/ErrorResponse"
+
+
+def test_openapi_documents_error_responses_for_extract_document(
+    settings: Settings, stub_extraction_service: ExtractionService
+) -> None:
+    with _client(settings, stub_extraction_service) as c:
+        schema = c.get("/openapi.json").json()
+    responses = schema["paths"]["/extract/document"]["post"]["responses"]
+    for code in ("404", "422", "502"):
+        assert code in responses, f"missing {code} in {list(responses)}"
+        assert _err_ref(responses[code]) == "#/components/schemas/ErrorResponse", (
+            f"{code} response does not reference ErrorResponse"
+        )

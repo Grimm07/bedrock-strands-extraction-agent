@@ -4,6 +4,20 @@ This file tracks intentional gaps. Each item is something that would
 meaningfully harden or extend the service for a real production deploy but
 was scoped out of an earlier release to keep that release reviewable.
 
+## Released since 0.2.0
+
+- **Coverage gate raised** from 80% to 85% (`pyproject.toml`); actual is
+  ~93%.
+- **OpenAPI typed-error coverage**: `/extract` now documents 404 + 502 with
+  `ErrorResponse`; `/extract/document` documents 404 + 422 + 502 with
+  `ErrorResponse`. Validation 422s on `/extract` continue to use FastAPI's
+  default `HTTPValidationError` shape.
+- **Boto3-layer e2e test** (`tests/test_bedrock_boto3_e2e.py`): patches
+  `BaseClient._make_api_call` to drive a real `BedrockModel` end-to-end
+  offline, asserting `modelId` and request shape on the
+  `bedrock-runtime` `ConverseStream` call. Catches BedrockModel-wiring
+  regressions the higher-layer Agent mocks cannot see.
+
 ## Released in 0.2.0 (Phase A + Phase C partial)
 
 - Pre-commit, gitleaks, semgrep custom rules, Renovate (replaces Dependabot
@@ -34,33 +48,6 @@ was scoped out of an earlier release to keep that release reviewable.
 - **Structured error body for 500s.** The global exception handler returns
   `ErrorResponse{detail, correlation_id}`.
 
-## Not yet shipped — production blockers
-
-These should be in place before this service handles real customer documents.
-
-### Auth
-
-The service has no built-in authentication. In v0.1 it assumes deployment
-behind a gateway / sidecar / mesh that handles auth. Direct exposure to the
-public internet is not safe.
-
-**Options for v0.2**:
-- Static `X-API-Key` header check (simple, fast).
-- JWT validation (issuer + audience + scopes).
-- mTLS (delegated to a sidecar like Envoy).
-
-### Rate limiting
-
-Nothing throttles `/extract`. A misbehaving caller can fan out into Bedrock
-and bury the service in cost or hit Bedrock RPS limits. Use a sidecar or
-add `slowapi` per-IP and per-API-key buckets.
-
-### Bedrock retries / fallbacks
-
-`BedrockModel` throws on transient throttling. Wire a tenacity-based retry
-around `Agent.__call__` with exponential backoff for `ThrottlingException`
-and `ModelStreamErrorException`.
-
 ## Not yet shipped — UX / DX
 
 ### Streaming endpoint
@@ -75,46 +62,17 @@ emits them. Strands supports streaming via `Agent.stream_async`.
 request. Switch to `Agent.acall` (or run the sync call in a thread pool)
 once the SDK API stabilises.
 
-### Request schema versioning
+### Request-side schema versioning
 
-`/extract` takes a free-form `schema_name`. Add an optional `schema_version`
-so callers pin to a tested version of `invoice@1.0.0` rather than tracking
-HEAD.
+`SchemaDefinition` already carries `version` and the registry exposes it on
+`/schemas`, but `ExtractRequestBody.schema_name` is still a bare name. Add
+an optional `schema_version` to the request body so callers pin to e.g.
+`invoice@1.0.0` rather than tracking HEAD of the registry.
 
 ## Not yet shipped — observability / quality
 
-### Coverage gate
+### ADRs still to record
 
-Currently 80%; actual is ~89%. Worth tightening to 85% to catch coverage
-regressions earlier. Gaps are concentrated in `agent/builder.py` (the
-real-Bedrock path) and `agent/mcp.py` (the real-stdio-server path).
-
-### Boto3-layer e2e test
-
-The integration test mocks at the Strands `Agent` level. A complementary
-test that mocks at the `boto3` Bedrock client would catch regressions in
-the BedrockModel wiring itself.
-
-### Error response wiring
-
-`ErrorResponse` is referenced by the OpenAPI schema for 500 only. Add it as
-the `responses=` argument on `/extract` so 404 and 502 also document the
-typed body.
-
-### Confidence calibration
-
-`overall_confidence` is a flat average of per-field confidences. A weighted
-average (required > optional) would be more useful for SLAs and downstream
-gating.
-
-### ADRs
-
-The decisions worth recording: Bedrock as default provider, JSON-only
-response contract, MCP-as-tools, retry-once-then-fail, ≥80% coverage gate.
-
-## Not yet shipped — repo hygiene
-
-- **`lefthook` / `pre-commit`** — wire up `make check` on commit.
-- **`.devcontainer`** — one-click VS Code setup.
-- **Load test** — `k6` or `locust` script with a stub backend.
-- **Renovate** in addition to Dependabot for tighter version pinning policy.
+The following decisions are worth ADRs, in addition to the five already
+filed (0001–0004, 0008): Bedrock as default provider, JSON-only response
+contract, MCP-as-tools, retry-once-then-fail, ≥85% coverage gate.
