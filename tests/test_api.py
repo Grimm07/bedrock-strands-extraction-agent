@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from bedrock_strands_agent.api.app import create_app
 from bedrock_strands_agent.config import Settings
 from bedrock_strands_agent.extraction import ExtractionService
+from bedrock_strands_agent.extraction.schemas import get_schema
 
 
 def _client(settings: Settings, service: ExtractionService) -> TestClient:
@@ -51,6 +52,41 @@ def test_extract_unknown_schema(
             json={"schema_name": "nope", "document_text": "doc"},
         )
     assert r.status_code == 404
+
+
+def test_extract_with_matching_schema_version_succeeds(
+    settings: Settings, stub_extraction_service: ExtractionService
+) -> None:
+    """Pinning to the registered version is a no-op pass-through."""
+
+    current_version = get_schema("invoice").version
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract",
+            json={
+                "schema_name": "invoice",
+                "schema_version": current_version,
+                "document_text": "doc",
+            },
+        )
+    assert r.status_code == 200, r.text
+
+
+def test_extract_with_mismatched_schema_version_returns_404(
+    settings: Settings, stub_extraction_service: ExtractionService
+) -> None:
+    """Pinning to a version that doesn't match the registry yields 404."""
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract",
+            json={
+                "schema_name": "invoice",
+                "schema_version": "9.9.9-no-such",
+                "document_text": "doc",
+            },
+        )
+    assert r.status_code == 404
+    assert "9.9.9-no-such" in r.json()["detail"]
 
 
 def test_extract_empty_text(settings: Settings, stub_extraction_service: ExtractionService) -> None:
@@ -220,6 +256,26 @@ def test_extract_document_unsupported_mime_returns_422(
     assert "unsupported" in r.json()["detail"].lower()
 
 
+def test_extract_document_with_mismatched_schema_version_returns_404(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """schema_version is also accepted (and pin-checked) as a multipart Form field."""
+    monkeypatch.setattr(
+        "bedrock_strands_agent.extraction.service.invoke_multimodal",
+        lambda **_kw: _INVOICE_CANNED,
+    )
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice", "schema_version": "9.9.9-no-such"},
+            files={"file": ("test.png", _png_upload_bytes(), "image/png")},
+        )
+    assert r.status_code == 404
+    assert "9.9.9-no-such" in r.json()["detail"]
+
+
 def test_extract_document_unknown_schema_returns_404(
     settings: Settings,
     stub_extraction_service: ExtractionService,
@@ -293,3 +349,22 @@ def test_openapi_documents_error_responses_for_extract_document(
         assert _err_ref(responses[code]) == "#/components/schemas/ErrorResponse", (
             f"{code} response does not reference ErrorResponse"
         )
+
+
+def test_openapi_documents_schema_version_as_optional_on_both_routes(
+    settings: Settings, stub_extraction_service: ExtractionService
+) -> None:
+    """`schema_version` is exposed on both routes and is never required."""
+    with _client(settings, stub_extraction_service) as c:
+        schema = c.get("/openapi.json").json()
+
+    body_schemas = schema["components"]["schemas"]
+    extract_body = body_schemas["ExtractRequestBody"]
+    assert "schema_version" in extract_body["properties"]
+    assert "schema_version" not in extract_body.get("required", [])
+
+    # The multipart Form field for /extract/document is also exposed.
+    doc_body_name = next(name for name in body_schemas if name.startswith("Body_extract_document"))
+    doc_body = body_schemas[doc_body_name]
+    assert "schema_version" in doc_body["properties"]
+    assert "schema_version" not in doc_body.get("required", [])

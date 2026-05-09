@@ -75,6 +75,7 @@ def build_router(
             return service.extract(
                 document_text=body.document_text,
                 schema_name=body.schema_name,
+                schema_version=body.schema_version,
                 document_id=body.document_id,
                 correlation_id=correlation_id,
             )
@@ -105,6 +106,10 @@ def build_router(
         schema_name: Annotated[str, Form(min_length=1)],
         file: Annotated[UploadFile, File(description="PDF or image (PNG/JPEG/WebP/GIF) upload")],
         document_id: Annotated[str | None, Form()] = None,
+        schema_version: Annotated[
+            str | None,
+            Form(description="Optional pin to a specific schema version (see /extract)."),
+        ] = None,
     ) -> ExtractionResult:
         """Run an extraction against an uploaded document (auto-routes text vs vision)."""
         service = cast("ExtractionService", request.app.state.extraction_service)
@@ -115,6 +120,7 @@ def build_router(
                 upload_bytes=contents,
                 content_type=file.content_type or "application/octet-stream",
                 schema_name=schema_name,
+                schema_version=schema_version,
                 document_id=document_id,
                 correlation_id=correlation_id,
             )

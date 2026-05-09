@@ -23,6 +23,15 @@ was scoped out of an earlier release to keep that release reviewable.
   `RASTER_MAX_PAGES` constants in `extraction.document`) and routed to
   the existing vision path. Mixed-text PDFs still use the text path —
   any page with extractable text wins. ADR-0008 has the v0.3 amendment.
+- **Request-side schema versioning**: `ExtractRequestBody.schema_version`
+  (and the matching `schema_version` Form field on `/extract/document`)
+  pin the request to a specific registered schema version. Pin-or-fail:
+  mismatch returns 404. Omitting the field tracks HEAD of the registry
+  (existing behaviour preserved).
+- **ADRs 0005–0010 backfilled**: 0005 (Bedrock as default provider),
+  0006 (JSON-only response contract), 0007 (MCP-as-tools), 0009 (bounded
+  self-correcting retry; replaces the placeholder "retry-once" name with
+  the actual `max_retries=2` decision), 0010 (≥85% coverage gate).
 
 ## Released in 0.2.0 (Phase A + Phase C partial)
 
@@ -68,17 +77,7 @@ emits them. Strands supports streaming via `Agent.stream_async`.
 request. Switch to `Agent.acall` (or run the sync call in a thread pool)
 once the SDK API stabilises.
 
-### Request-side schema versioning
-
-`SchemaDefinition` already carries `version` and the registry exposes it on
-`/schemas`, but `ExtractRequestBody.schema_name` is still a bare name. Add
-an optional `schema_version` to the request body so callers pin to e.g.
-`invoice@1.0.0` rather than tracking HEAD of the registry.
-
 ## Not yet shipped — observability / quality
 
-### ADRs still to record
-
-The following decisions are worth ADRs, in addition to the five already
-filed (0001–0004, 0008): Bedrock as default provider, JSON-only response
-contract, MCP-as-tools, retry-once-then-fail, ≥85% coverage gate.
+(Empty — the previously deferred ADR cluster shipped under "Released
+since 0.2.0".)

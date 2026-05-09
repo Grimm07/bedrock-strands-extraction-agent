@@ -59,6 +59,23 @@ _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 
+def _resolve_schema(name: str, version: str | None) -> FormSchema:
+    """Look up a registered schema, optionally pinned to a specific version.
+
+    Pin-or-fail: if ``version`` is supplied and does not match the registered
+    schema's ``version``, raises ``KeyError`` (which the FastAPI routes
+    translate to 404). Omit ``version`` to track HEAD of the registry.
+    """
+    schema = get_schema(name)
+    if version is not None and schema.version != version:
+        msg = (
+            f"Schema {name!r} version {version!r} not registered "
+            f"(current registered version: {schema.version!r})"
+        )
+        raise KeyError(msg)
+    return schema
+
+
 class ExtractionError(RuntimeError):
     """Raised when the model output cannot be turned into a result."""
 
@@ -98,11 +115,12 @@ class ExtractionService:
         *,
         document_text: str,
         schema_name: str,
+        schema_version: str | None = None,
         document_id: str | None = None,
         correlation_id: str | None = None,
     ) -> ExtractionResult:
         """Run a text-mode extraction and return a fully-validated result."""
-        schema = get_schema(schema_name)
+        schema = _resolve_schema(schema_name, schema_version)
         initial = self._bundle.prompt_renderer.extract(schema=schema, document_text=document_text)
         return self._run_extraction_loop(
             schema=schema,
@@ -121,6 +139,7 @@ class ExtractionService:
         upload_bytes: bytes,
         content_type: str,
         schema_name: str,
+        schema_version: str | None = None,
         document_id: str | None = None,
         correlation_id: str | None = None,
     ) -> ExtractionResult:
@@ -133,6 +152,7 @@ class ExtractionService:
             return self.extract(
                 document_text=doc.text or "",
                 schema_name=schema_name,
+                schema_version=schema_version,
                 document_id=document_id,
                 correlation_id=correlation_id,
             )
@@ -143,6 +163,7 @@ class ExtractionService:
             images=doc.images,
             image_format=doc.image_format,
             schema_name=schema_name,
+            schema_version=schema_version,
             document_id=document_id,
             correlation_id=correlation_id,
         )
@@ -156,10 +177,11 @@ class ExtractionService:
         images: tuple[bytes, ...],
         image_format: ImageFormat,
         schema_name: str,
+        schema_version: str | None,
         document_id: str | None,
         correlation_id: str | None,
     ) -> ExtractionResult:
-        schema = get_schema(schema_name)
+        schema = _resolve_schema(schema_name, schema_version)
         settings = self._bundle.settings
         initial = self._bundle.prompt_renderer.extract_image(schema=schema)
 

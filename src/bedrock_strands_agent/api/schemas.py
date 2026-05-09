@@ -35,6 +35,15 @@ class ExtractRequestBody(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     schema_name: str = Field(min_length=1, examples=["invoice", "irs_w9"])
+    schema_version: str | None = Field(
+        default=None,
+        description=(
+            "Optional pin to a specific schema version. If supplied, the request "
+            "fails with 404 when the registry's current version for `schema_name` "
+            "differs. Omit to track HEAD."
+        ),
+        examples=["1.0.0"],
+    )
     document_text: str = Field(min_length=1)
     document_id: str | None = None
 
