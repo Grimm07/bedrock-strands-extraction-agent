@@ -33,6 +33,14 @@ was scoped out of an earlier release to keep that release reviewable.
   `asyncio.to_thread`, so the Bedrock round-trip no longer blocks the
   FastAPI event loop. The threadpool unblocks the loop today; native
   async via `Agent.invoke_async` is reserved for the streaming path.
+- **A2A (agent-to-agent) protocol** ([ADR-0012](adr/0012-a2a-protocol.md)):
+  optional A2A endpoints for inter-agent communication. When
+  `A2A_ENABLED=true`, the app mounts `/.well-known/agent-card.json`
+  (discovery) and `POST /a2a/jsonrpc`. A custom executor wraps
+  `ExtractionService.extract` directly so the schema-first pipeline
+  (validators, citations, retry, prompt-injection defences) flows
+  through unchanged. Text-mode only today; vision over A2A is a
+  deferred follow-on.
 - **k6 CI gate** (`.github/workflows/load-test.yml`): every PR runs a
   30-second `ci_smoke` scenario against `scripts/_boot_with_stub.py`
   (MagicMock-backed `ExtractionService`, no Bedrock spend). Catches

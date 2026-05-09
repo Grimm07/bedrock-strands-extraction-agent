@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (A2A protocol)
+
+- **A2A (agent-to-agent) protocol integration**
+  ([ADR-0012](docs/adr/0012-a2a-protocol.md)): when `A2A_ENABLED=true`,
+  the FastAPI app mounts `GET /.well-known/agent-card.json` (canonical
+  A2A discovery), `GET /a2a/.well-known/agent-card.json` (namespaced
+  copy), and `POST /a2a/jsonrpc` (JSON-RPC 2.0 endpoint). A custom
+  `ExtractionAgentExecutor` wraps `ExtractionService.extract` directly
+  rather than using `strands.multiagent.a2a.StrandsA2AExecutor`, so
+  the schema-first pipeline (validators, citation verification, retry
+  loop, prompt-injection defences) flows through unchanged.
+- A2A messages must carry a `DataPart` payload with `schema_name` +
+  `document_text` (optional `schema_version`, `document_id`).
+  TextPart-only requests fail with a clear error directing the caller
+  to the structured shape. The validated `ExtractionResult` is
+  returned as a `DataPart` artifact named `extraction_result`.
+- Discovery is unauthenticated by spec; the canonical and namespaced
+  agent-card paths are added to `AUTH_EXCLUDED_PATHS`. The JSON-RPC
+  endpoint goes through `AuthMiddleware` like every other API surface.
+- New env vars: `A2A_ENABLED` (bool, default `false` — opt-in
+  per-environment) and `A2A_PUBLIC_URL` (the URL advertised in the
+  agent card; falls back to `http://{api_host}:{api_port}/a2a/jsonrpc`
+  for local dev). Documented in `.env.example` and
+  `docs/deployment-variables.md`.
+- New tests in `tests/test_a2a.py` (15 cases): agent-card discovery
+  (canonical + namespaced + URL fallback + explicit override), happy-
+  path `message/send` returning the `ExtractionResult` artifact, error
+  cases (TextPart-only, missing required field, unknown schema),
+  defence-in-depth checks that A2A routes are absent when disabled and
+  that the agent card bypasses auth while the JSON-RPC endpoint does
+  not.
+- Vision-mode A2A is deliberately deferred: the current surface is
+  text-only. Vision over A2A would need a FilePart adapter and a fresh
+  trust-boundary review for image content over JSON-RPC.
+
 ### Added (operational readiness)
 
 - **k6 CI gate against the stub-mode app**: new

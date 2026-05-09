@@ -81,6 +81,19 @@ curl -X POST http://localhost:8000/extract/stream \
 | POST   | `/extract/stream`   | Stream a text-mode extraction as Server-Sent Events.                   |
 | GET    | `/metrics`          | Prometheus metrics (text/plain; not in OpenAPI).                       |
 
+When `A2A_ENABLED=true`, the service additionally mounts:
+
+| Method | Path                                  | Description                                                         |
+| ------ | ------------------------------------- | ------------------------------------------------------------------- |
+| GET    | `/.well-known/agent-card.json`        | A2A discovery document (canonical path; unauthenticated).           |
+| GET    | `/a2a/.well-known/agent-card.json`    | Namespaced copy of the agent card.                                  |
+| POST   | `/a2a/jsonrpc`                        | A2A JSON-RPC 2.0 endpoint. `message/send`, `tasks/get`, etc.        |
+
+A2A messages must carry a `DataPart` payload with `schema_name` +
+`document_text`; the validated `ExtractionResult` returns as a
+`DataPart` artifact. See [ADR-0012](docs/adr/0012-a2a-protocol.md) for
+the design and `docs/deployment-variables.md` for the env vars.
+
 `X-Request-ID` is honoured on the way in and echoed on the way out. If you
 do not send one, the server generates a UUID and uses it as the
 `extraction.correlation_id` span attribute.

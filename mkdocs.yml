@@ -59,6 +59,7 @@ nav:
       - "0009 — Bounded self-correcting retry": adr/0009-bounded-self-correcting-retry.md
       - "0010 — ≥85% coverage gate": adr/0010-coverage-gate-85.md
       - "0011 — Prompt-injection threat model": adr/0011-prompt-injection-threat-model.md
+      - "0012 — A2A protocol": adr/0012-a2a-protocol.md
   - Runbooks:
       - On-call: runbooks/oncall.md
       - Bedrock throttling: runbooks/bedrock-throttling.md

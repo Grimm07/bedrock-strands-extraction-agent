@@ -83,6 +83,10 @@ class Settings(BaseSettings):
             "/docs",
             "/openapi.json",
             "/redoc",
+            # A2A discovery; the JSON-RPC endpoint at /a2a/jsonrpc still
+            # goes through AuthMiddleware.
+            "/.well-known/agent-card.json",
+            "/a2a/.well-known/agent-card.json",
         ],
     )
 
@@ -90,6 +94,36 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = Field(default=False)
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
     rate_limit_burst: int = Field(default=10, ge=1, le=10_000)
+
+    # A2A (agent-to-agent) protocol ---------------------------------------
+    # When enabled, mounts an A2A JSON-RPC endpoint at /a2a/jsonrpc and the
+    # agent-card discovery at /.well-known/agent-card.json (plus a copy
+    # under /a2a/.well-known/ for clients that namespace discovery). Default
+    # off; opt-in per environment.
+    a2a_enabled: bool = Field(default=False)
+    # Public-facing URL where the A2A endpoint is reachable. The agent card
+    # advertises this URL to other agents; if unset, falls back to
+    # http://{api_host}:{api_port}/a2a/jsonrpc. Validated at startup so a
+    # typo (`http//bad-url`, `https:/x`) fails loud rather than silently
+    # advertising an unreachable URL.
+    a2a_public_url: str | None = Field(default=None)
+
+    @field_validator("a2a_public_url", mode="after")
+    @classmethod
+    def _validate_a2a_public_url(cls, value: str | None) -> str | None:
+        """Reject malformed `A2A_PUBLIC_URL` at startup."""
+        if value is None or value == "":
+            return None
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            msg = (
+                f"A2A_PUBLIC_URL must be an http(s) URL with a host; got {value!r}. "
+                "Example: https://extract.example.com/a2a/jsonrpc"
+            )
+            raise ValueError(msg)
+        return value
 
     # ------------------------------------------------------------------ #
     @field_validator("mcp_enabled_servers", "api_keys", "auth_excluded_paths", mode="before")

@@ -103,6 +103,14 @@ def create_app(
         )
     )
 
+    if settings.a2a_enabled:
+        # Mount A2A protocol routes (agent-card discovery + JSON-RPC endpoint)
+        # alongside the HTTP routes so they inherit the same middleware stack.
+        # See docs/adr/0012-a2a-protocol.md for the design rationale.
+        from bedrock_strands_agent.a2a import build_a2a_routes
+
+        app.router.routes.extend(build_a2a_routes(app.state.extraction_service, settings))
+
     Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
     instrument_fastapi(app)
 

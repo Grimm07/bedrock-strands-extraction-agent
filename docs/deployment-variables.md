@@ -70,6 +70,13 @@ ECS task definition. Source-of-truth:
 | `RATE_LIMIT_PER_MINUTE` | int | `60` | Per-key (or per-IP fallback) request budget. |
 | `RATE_LIMIT_BURST` | int | `10` | Burst allowance on top of the steady rate. |
 
+### A2A (agent-to-agent) protocol
+
+| Var | Type | Default | Notes |
+|---|---|---|---|
+| `A2A_ENABLED` | bool | `false` | Mount the A2A discovery + JSON-RPC endpoints. Off by default; opt in per environment. See [ADR-0012](adr/0012-a2a-protocol.md). |
+| `A2A_PUBLIC_URL` | URL | empty | The URL advertised in `/.well-known/agent-card.json`. **REQUIRED** in staging/prod (other agents need a reachable URL). Empty falls back to `http://{API_HOST}:{API_PORT}/a2a/jsonrpc` — fine for local dev only. |
+
 ### MCP
 
 | Var | Type | Default | Notes |

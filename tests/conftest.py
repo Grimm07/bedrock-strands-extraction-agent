@@ -35,6 +35,7 @@ _LEAKY_PREFIXES = (
     "JWT_",
     "API_KEYS",
     "RATE_LIMIT_",
+    "A2A_",
 )
 
 

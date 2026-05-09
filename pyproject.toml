@@ -26,8 +26,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "strands-agents>=0.1.0",
+    "strands-agents[a2a]>=0.1.0",
     "strands-agents-tools>=0.1.0",
+    # Pin a2a-sdk directly so a future widening of strands-agents[a2a]'s
+    # range can't pick up a major rev with breaking type renames
+    # (DataPart/FilePart were dropped between 0.x and 1.x). The
+    # executor + routes modules are tested against the 0.3.x API.
+    "a2a-sdk>=0.3,<0.4",
     "boto3>=1.35.0",
     "botocore>=1.35.0",
     "fastapi>=0.115.0",

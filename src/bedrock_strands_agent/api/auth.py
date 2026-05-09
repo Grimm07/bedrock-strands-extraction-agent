@@ -87,9 +87,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         """Apply the configured auth mode or pass through."""
+        path = request.url.path
         if (
             self._settings.auth_mode == "none"
-            or request.url.path in self._settings.auth_excluded_paths
+            or path in self._settings.auth_excluded_paths
+            or self._is_a2a_discovery_path(path)
         ):
             return await call_next(request)
         try:
@@ -97,6 +99,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except AuthError as exc:
             return self._unauthorized(request, str(exc))
         return await call_next(request)
+
+    def _is_a2a_discovery_path(self, path: str) -> bool:
+        """A2A spec mandates the agent card is unauthenticated.
+
+        Hard-coded here (in addition to the default in
+        ``Settings.auth_excluded_paths``) so an operator override of
+        ``AUTH_EXCLUDED_PATHS`` cannot accidentally close discovery off
+        — pydantic-settings replaces list defaults rather than merging.
+        """
+        if not self._settings.a2a_enabled:
+            return False
+        return path in (
+            "/.well-known/agent-card.json",
+            "/a2a/.well-known/agent-card.json",
+        )
 
     # ------------------------------------------------------------------ #
     def _authorize(self, request: Request) -> None:
