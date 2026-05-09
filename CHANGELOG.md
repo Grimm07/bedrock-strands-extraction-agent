@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (operational readiness)
+
+- **k6 CI gate against the stub-mode app**: new
+  `.github/workflows/load-test.yml` boots `scripts/_boot_with_stub.py`
+  (no Bedrock calls), waits for `/health`, and runs a 30-second
+  `ci_smoke` scenario with the production SLO thresholds (p95 < 3 s,
+  error rate < 1%). Catches HTTP-routing, middleware, and event-loop
+  regressions on every PR — for free, no Bedrock spend. The existing
+  `smoke` (5 RPS / 2 min) and `soak` (50 RPS / 5 min) scenarios remain
+  for manual / release-time runs against real Bedrock; pick the
+  scenario set with `K6_PROFILE=ci|smoke|soak|full`.
+- **`docs/cost-breakdown.md`**: per-request Bedrock token math, monthly
+  cost bands at three traffic profiles, compute / observability /
+  networking line items, and an ordered list of cost-reduction levers.
+  Bedrock dominates by ~100× over infra; the doc names model selection,
+  conditional grounding, retry-budget tightening, and document-hash
+  caching as the highest-leverage knobs.
+- **`docs/deployment-variables.md`**: full operator checklist for
+  standing up a new env — application env vars (with REQUIRED markers),
+  AWS-side IAM scopes, and the Terraform input variables the deferred
+  `infra/` module will need. Calls out the PagerDuty / SNS-topic
+  integration as a deferred TODO.
+
 ### Added (Phase D — Vision-mode grounding)
 
 - **Vision-mode second-pass grounding** ([ADR-0011](docs/adr/0011-prompt-injection-threat-model.md)

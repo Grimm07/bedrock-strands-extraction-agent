@@ -1,18 +1,42 @@
 # Load test (k6)
 
 This directory ships a [k6](https://k6.io/) script that exercises the
-`/extract` endpoint with two scenarios in sequence:
+`/extract` endpoint with three selectable scenarios:
 
-| Scenario | Rate     | Duration | Purpose                                         |
-| -------- | -------- | -------- | ----------------------------------------------- |
-| `smoke`  | 5 RPS    | 2 min    | Cheap regression check on every release.        |
-| `soak`   | 50 RPS   | 5 min    | Validates p95 < 3 s and error rate < 1% (SLOs). |
+| Scenario | Rate   | Duration | Purpose                                         |
+| -------- | ------ | -------- | ----------------------------------------------- |
+| `ci`     | 10 RPS | 30 s     | CI gate against the stub-mode app (offline). |
+| `smoke`  | 5 RPS  | 2 min    | Cheap regression check on every release.       |
+| `soak`   | 50 RPS | 5 min    | Validates p95 < 3 s and error rate < 1% (SLOs). |
 
-Thresholds match `docs/slos.md`. CI does **not** run this by default — it
-costs Bedrock invocations against staging. The make target is for manual /
-release-time runs.
+Thresholds match `docs/slos.md` (p95 < 3 000 ms, error rate < 1%). Pick
+which scenarios run via `K6_PROFILE`:
 
-## Local (against `make dev`)
+| `K6_PROFILE` | Scenarios | Where it runs |
+|---|---|---|
+| `ci` | `ci` only | GitHub Actions `Load test (k6 smoke)` workflow on every PR / push to main, against the stub-mode app (no Bedrock cost). |
+| `smoke` | `smoke` only | Manual, against `make dev`. |
+| `soak` | `soak` only | Manual / release-time, against staging. |
+| `full` (default) | `smoke` + `soak` | Manual release gate. |
+
+## CI (against `scripts/_boot_with_stub.py`)
+
+The `Load test (k6 smoke)` workflow boots the FastAPI app with a
+MagicMock-backed `ExtractionService` (no Bedrock calls), waits for
+`/health`, and runs the `ci` scenario. Catches regressions in HTTP
+routing, middleware, the asyncio event-loop layer, and the response
+shape — without paying for Bedrock. See
+`.github/workflows/load-test.yml`.
+
+Reproduce locally:
+
+```bash
+uv run python scripts/_boot_with_stub.py &       # boots on 127.0.0.1:8765
+BASE_URL=http://127.0.0.1:8765 K6_PROFILE=ci \
+  k6 run tests/load/extract.js
+```
+
+## Local (against `make dev`, real Bedrock)
 
 ```bash
 make dev          # one terminal — starts the FastAPI app

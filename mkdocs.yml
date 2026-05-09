@@ -43,6 +43,8 @@ nav:
   - Roadmap: ROADMAP.md
   - Contributing: CONTRIBUTING.md
   - Extraction modes: extraction-modes.md
+  - Cost breakdown: cost-breakdown.md
+  - Deployment variables: deployment-variables.md
   - Service Level Objectives: slos.md
   - Architecture decisions:
       - Index: adr/README.md

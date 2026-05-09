@@ -33,6 +33,18 @@ was scoped out of an earlier release to keep that release reviewable.
   `asyncio.to_thread`, so the Bedrock round-trip no longer blocks the
   FastAPI event loop. The threadpool unblocks the loop today; native
   async via `Agent.invoke_async` is reserved for the streaming path.
+- **k6 CI gate** (`.github/workflows/load-test.yml`): every PR runs a
+  30-second `ci_smoke` scenario against `scripts/_boot_with_stub.py`
+  (MagicMock-backed `ExtractionService`, no Bedrock spend). Catches
+  HTTP / middleware / event-loop regressions free. The release-time
+  `smoke` + `soak` scenarios against real Bedrock remain manual.
+  PagerDuty / Opsgenie wiring (Critical #3) is **still deferred** — see
+  `docs/deployment-variables.md` for the integration TODO once an
+  on-call rotation is set up.
+- **`docs/cost-breakdown.md`** and **`docs/deployment-variables.md`**:
+  per-request and monthly Bedrock cost math; cost-reduction levers in
+  priority order; full operator checklist of env vars + IAM +
+  Terraform inputs needed to stand up a new environment.
 - **Vision-mode grounding** (closes the last Critical follow-on from
   ADR-0011): every `/extract/document` image extraction now runs a
   second `invoke_multimodal` call with a verification prompt asking the

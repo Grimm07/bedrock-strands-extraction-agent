@@ -1,0 +1,77 @@
+name: Load test (k6 smoke)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  k6-ci-smoke:
+    name: k6 ci_smoke against stub-mode app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv + Python
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-groups --frozen
+
+      # Boot the FastAPI app in stub mode (no Bedrock calls). The script
+      # binds to 127.0.0.1:8765 with a MagicMock-backed ExtractionService
+      # that returns canned JSON; this validates HTTP routing, middleware,
+      # and the asyncio event-loop layer without paying for Bedrock.
+      - name: Launch stub-mode service
+        run: |
+          uv run python scripts/_boot_with_stub.py > stub.log 2>&1 &
+          echo "STUB_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for /health to come up
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/health >/dev/null 2>&1; then
+              echo "service ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::service did not respond on /health within 30s"
+          echo "--- stub.log ---"
+          cat stub.log || true
+          exit 1
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 ci_smoke
+        env:
+          BASE_URL: http://127.0.0.1:8765
+          K6_PROFILE: ci
+        # k6 exits non-zero if the file's `thresholds` block is breached
+        # (p95 < 3s, error rate < 1%). On the stub backend p95 should be
+        # well under 100ms; 3s is a generous regression ceiling that
+        # matches the production SLO from docs/slos.md.
+        run: k6 run tests/load/extract.js
+
+      - name: Stub server log on failure
+        if: failure()
+        run: cat stub.log || true
+
+      - name: Stop stub-mode service
+        if: always()
+        run: |
+          if [ -n "${STUB_PID:-}" ]; then
+            kill "$STUB_PID" 2>/dev/null || true
+            wait "$STUB_PID" 2>/dev/null || true
+          fi
