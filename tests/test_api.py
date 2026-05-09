@@ -368,3 +368,111 @@ def test_openapi_documents_schema_version_as_optional_on_both_routes(
     doc_body = body_schemas[doc_body_name]
     assert "schema_version" in doc_body["properties"]
     assert "schema_version" not in doc_body.get("required", [])
+
+
+# --------------------------------------------------------------------------- #
+# /extract/stream — Server-Sent Events
+# --------------------------------------------------------------------------- #
+
+
+def _parse_sse(raw: str) -> list[tuple[str, str]]:
+    """Split an SSE response body into a list of ``(event_type, data)`` tuples."""
+    frames = []
+    for chunk in raw.split("\n\n"):
+        if not chunk.strip():
+            continue
+        event_line, data_line = chunk.split("\n", 1)
+        assert event_line.startswith("event: "), f"malformed frame: {chunk!r}"
+        assert data_line.startswith("data: "), f"malformed frame: {chunk!r}"
+        frames.append((event_line.removeprefix("event: "), data_line.removeprefix("data: ")))
+    return frames
+
+
+def test_extract_stream_emits_chunks_then_result(
+    settings: Settings, stub_streaming_service: ExtractionService
+) -> None:
+    """Happy path: the SSE stream emits N `chunk` frames then exactly one `result`."""
+    import json as _json
+
+    with _client(settings, stub_streaming_service) as c:
+        r = c.post(
+            "/extract/stream",
+            json={"schema_name": "invoice", "document_text": "doc"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/event-stream")
+
+    frames = _parse_sse(r.text)
+    chunk_frames = [data for ev, data in frames if ev == "chunk"]
+    result_frames = [data for ev, data in frames if ev == "result"]
+    error_frames = [data for ev, data in frames if ev == "error"]
+
+    assert len(chunk_frames) > 1, "expected multiple chunk frames"
+    assert len(result_frames) == 1, f"expected exactly one result frame; got {len(result_frames)}"
+    assert error_frames == []
+
+    # The final result frame's JSON payload is a serialised ExtractionResult.
+    result_payload = _json.loads(result_frames[0])
+    assert result_payload["schema"] == "invoice"
+    assert result_payload["fields"][0]["name"] == "invoice_number"
+
+    # Concatenating the chunk frames must reproduce the JSON the model "emitted".
+    concatenated = "".join(_json.loads(c)["text"] for c in chunk_frames)
+    assert "INV-001" in concatenated
+
+
+def test_extract_stream_unknown_schema_returns_404_before_stream(
+    settings: Settings, stub_streaming_service: ExtractionService
+) -> None:
+    """Schema-not-found is rejected with 404 *before* the SSE response opens."""
+    with _client(settings, stub_streaming_service) as c:
+        r = c.post(
+            "/extract/stream",
+            json={"schema_name": "no_such", "document_text": "doc"},
+        )
+    assert r.status_code == 404
+    # A 404 is a normal JSON body, NOT an event-stream — verify by content-type.
+    assert r.headers["content-type"].startswith("application/json")
+
+
+def test_extract_stream_mismatched_schema_version_returns_404(
+    settings: Settings, stub_streaming_service: ExtractionService
+) -> None:
+    """Pin mismatch is also a pre-stream 404 (consistent with /extract)."""
+    with _client(settings, stub_streaming_service) as c:
+        r = c.post(
+            "/extract/stream",
+            json={
+                "schema_name": "invoice",
+                "schema_version": "9.9.9-no-such",
+                "document_text": "doc",
+            },
+        )
+    assert r.status_code == 404
+
+
+def test_extract_stream_emits_error_event_on_unparseable_json(
+    settings: Settings, stub_streaming_service_returns_garbage: ExtractionService
+) -> None:
+    """Mid-stream JSON-parse failure surfaces as a terminal `event: error` frame.
+
+    The HTTP status is still 200 — once an SSE response opens the status code
+    cannot change, so post-stream errors travel inside the stream itself.
+    """
+    import json as _json
+
+    with _client(settings, stub_streaming_service_returns_garbage) as c:
+        r = c.post(
+            "/extract/stream",
+            json={"schema_name": "invoice", "document_text": "doc"},
+        )
+    assert r.status_code == 200
+    frames = _parse_sse(r.text)
+    assert frames, "expected at least one SSE frame"
+    final_event, final_data = frames[-1]
+    assert final_event == "error", f"expected terminal 'error' frame; got {final_event!r}"
+    detail = _json.loads(final_data)["detail"]
+    assert "Could not parse JSON" in detail
+
+    # Sanity: no result frame was emitted before the error.
+    assert all(ev != "result" for ev, _ in frames)

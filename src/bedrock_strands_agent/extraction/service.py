@@ -42,11 +42,11 @@ from bedrock_strands_agent.extraction.models import (
     FormSchema,
 )
 from bedrock_strands_agent.extraction.multimodal import invoke_multimodal
-from bedrock_strands_agent.extraction.schemas import get_schema
+from bedrock_strands_agent.extraction.schemas import resolve_schema
 from bedrock_strands_agent.extraction.validators import validate_value
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable
     from typing import Literal
 
     from bedrock_strands_agent.agent.builder import AgentBundle
@@ -57,23 +57,6 @@ LOGGER = logging.getLogger(__name__)
 _TRACER = trace.get_tracer("bedrock_strands_agent.extraction")
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
-
-
-def _resolve_schema(name: str, version: str | None) -> FormSchema:
-    """Look up a registered schema, optionally pinned to a specific version.
-
-    Pin-or-fail: if ``version`` is supplied and does not match the registered
-    schema's ``version``, raises ``KeyError`` (which the FastAPI routes
-    translate to 404). Omit ``version`` to track HEAD of the registry.
-    """
-    schema = get_schema(name)
-    if version is not None and schema.version != version:
-        msg = (
-            f"Schema {name!r} version {version!r} not registered "
-            f"(current registered version: {schema.version!r})"
-        )
-        raise KeyError(msg)
-    return schema
 
 
 class ExtractionError(RuntimeError):
@@ -120,7 +103,7 @@ class ExtractionService:
         correlation_id: str | None = None,
     ) -> ExtractionResult:
         """Run a text-mode extraction and return a fully-validated result."""
-        schema = _resolve_schema(schema_name, schema_version)
+        schema = resolve_schema(schema_name, schema_version)
         initial = self._bundle.prompt_renderer.extract(schema=schema, document_text=document_text)
         return self._run_extraction_loop(
             schema=schema,
@@ -132,6 +115,97 @@ class ExtractionService:
             document_id=document_id,
             correlation_id=correlation_id,
         )
+
+    async def extract_stream(
+        self,
+        *,
+        document_text: str,
+        schema_name: str,
+        schema_version: str | None = None,
+        document_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream a text-mode extraction as Strands events.
+
+        Yields:
+            ``{"type": "chunk", "text": <delta>}`` for each text delta the
+            model emits, followed by exactly one terminal event:
+
+            * ``{"type": "result", "result": <ExtractionResult.model_dump>}``
+              on success.
+            * ``{"type": "error", "detail": <str>}`` on a parse/validation
+              failure of the accumulated text.
+
+            The retry loop that ``extract`` uses is intentionally NOT applied
+            here — re-prompting mid-stream is a poor UX. Callers that need
+            self-correction should fall back to ``POST /extract`` after a
+            stream-side error. Consequently the ``extraction.stream`` span
+            never opens an ``extraction.attempt`` sub-span (see ADR-0009);
+            trace queries that filter on ``extraction.attempt`` will not
+            match streaming traces by design.
+
+        See `docs/ROADMAP.md` "Released since 0.2.0" — partial-field
+        streaming is a future enhancement on top of this raw-delta path.
+        """
+        schema = resolve_schema(schema_name, schema_version)
+        prompt = self._bundle.prompt_renderer.extract(schema=schema, document_text=document_text)
+        settings = self._bundle.settings
+        started = time.perf_counter()
+        accumulated: list[str] = []
+
+        with _TRACER.start_as_current_span("extraction.stream") as span:
+            span.set_attribute("extraction.schema", schema.name)
+            span.set_attribute("extraction.schema_version", schema.version)
+            span.set_attribute("bedrock.model_id", settings.bedrock_model_id)
+            span.set_attribute("extraction.mode", "stream")
+            if document_id is not None:
+                span.set_attribute("extraction.document_id", document_id)
+            if correlation_id is not None:
+                span.set_attribute("extraction.correlation_id", correlation_id)
+
+            async for event in self._bundle.agent.stream_async(prompt):
+                if not isinstance(event, dict):
+                    continue
+                delta = event.get("data")
+                if isinstance(delta, str) and delta:
+                    accumulated.append(delta)
+                    yield {"type": "chunk", "text": delta}
+
+            raw = "".join(accumulated)
+            span.set_attribute("extraction.streamed_chars", len(raw))
+
+            try:
+                payload = self._parse_json(raw)
+            except ExtractionError as exc:
+                yield {
+                    "type": "error",
+                    "detail": f"Could not parse JSON from streamed response: {exc}",
+                }
+                return
+
+            fields, warnings, _, _ = self._coerce_fields(
+                payload, schema, document_text=document_text
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            span.set_attribute("extraction.latency_ms", elapsed_ms)
+            span.set_attribute("extraction.field_count", len(fields))
+            # Mirrored from the non-streaming `extraction.run` span so
+            # dashboards aggregating across modes don't drop streaming traffic.
+            span.set_attribute("extraction.warning_count", len(warnings))
+            result = ExtractionResult.model_validate(
+                {
+                    "schema": schema.name,
+                    "schema_version": schema.version,
+                    "model_id": settings.bedrock_model_id,
+                    "fields": fields,
+                    "overall_confidence": compute_overall(fields, schema),
+                    "warnings": warnings,
+                    "latency_ms": elapsed_ms,
+                    "extracted_at": datetime.now(UTC),
+                    "correlation_id": correlation_id,
+                }
+            )
+            yield {"type": "result", "result": result.model_dump(by_alias=True, mode="json")}
 
     def extract_document(
         self,
@@ -181,7 +255,7 @@ class ExtractionService:
         document_id: str | None,
         correlation_id: str | None,
     ) -> ExtractionResult:
-        schema = _resolve_schema(schema_name, schema_version)
+        schema = resolve_schema(schema_name, schema_version)
         settings = self._bundle.settings
         initial = self._bundle.prompt_renderer.extract_image(schema=schema)
 

@@ -33,6 +33,15 @@ was scoped out of an earlier release to keep that release reviewable.
   `asyncio.to_thread`, so the Bedrock round-trip no longer blocks the
   FastAPI event loop. The threadpool unblocks the loop today; native
   async via `Agent.invoke_async` is reserved for the streaming path.
+- **Streaming endpoint** `POST /extract/stream`: emits Server-Sent
+  Events (`event: chunk` per text delta from `Agent.stream_async`,
+  then exactly one terminal `event: result` or `event: error`). Schema
+  resolution is pre-flighted so unknown-name / mismatched-version
+  return 404 *before* the SSE response opens. The retry loop is
+  intentionally NOT applied to streamed extractions — re-prompting
+  mid-stream is poor UX; callers fall back to `POST /extract` after a
+  stream-side error. Partial-field streaming (per-field validate +
+  emit) is a future enhancement on top of this raw-delta path.
 - **ADRs 0005–0010 backfilled**: 0005 (Bedrock as default provider),
   0006 (JSON-only response contract), 0007 (MCP-as-tools), 0009 (bounded
   self-correcting retry; replaces the placeholder "retry-once" name with
@@ -70,11 +79,8 @@ was scoped out of an earlier release to keep that release reviewable.
 
 ## Not yet shipped — UX / DX
 
-### Streaming endpoint
-
-Long extractions return only after the model completes. Add a
-`/extract/stream` SSE endpoint that streams partial fields as the model
-emits them. Strands supports streaming via `Agent.stream_async`.
+(Empty — all previously-deferred UX/DX items shipped under "Released
+since 0.2.0".)
 
 ## Not yet shipped — observability / quality
 

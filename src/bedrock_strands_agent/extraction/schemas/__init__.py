@@ -30,6 +30,23 @@ def get_schema(name: str) -> FormSchema:
         raise KeyError(f"Unknown schema {name!r}. Registered: {known}") from exc
 
 
+def resolve_schema(name: str, version: str | None) -> FormSchema:
+    """Look up a registered schema, optionally pinned to a specific version.
+
+    Pin-or-fail: if ``version`` is supplied and does not match the registered
+    schema's ``version``, raises ``KeyError`` (which the FastAPI routes
+    translate to 404). Omit ``version`` to track HEAD of the registry.
+    """
+    schema = get_schema(name)
+    if version is not None and schema.version != version:
+        msg = (
+            f"Schema {name!r} version {version!r} not registered "
+            f"(current registered version: {schema.version!r})"
+        )
+        raise KeyError(msg)
+    return schema
+
+
 def list_schema_names() -> list[str]:
     """Return the registered schema names, sorted."""
     return sorted(SCHEMA_REGISTRY)
@@ -43,4 +60,5 @@ __all__ = [
     "get_schema",
     "list_schema_names",
     "register_schema",
+    "resolve_schema",
 ]

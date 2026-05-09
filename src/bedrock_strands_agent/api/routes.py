@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from bedrock_strands_agent import __version__
 from bedrock_strands_agent.api.schemas import (
@@ -22,9 +24,11 @@ from bedrock_strands_agent.extraction import (
     ExtractionService,
 )
 from bedrock_strands_agent.extraction.document import UnsupportedDocumentError
-from bedrock_strands_agent.extraction.schemas import SCHEMA_REGISTRY
+from bedrock_strands_agent.extraction.schemas import SCHEMA_REGISTRY, resolve_schema
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from slowapi import Limiter
 
     from bedrock_strands_agent.config import Settings
@@ -165,4 +169,78 @@ def build_router(
         tags=["extraction"],
     )
 
+    async def extract_stream(body: ExtractRequestBody, request: Request) -> StreamingResponse:
+        """Stream a text-mode extraction as Server-Sent Events.
+
+        Emits `event: chunk` frames for each text delta the model produces,
+        followed by exactly one terminal `event: result` (success) or
+        `event: error` (parse/validation failure on the accumulated text).
+        Schema-not-found is rejected with HTTP 404 *before* the SSE response
+        starts so callers never see a half-opened stream for a bad pin.
+        """
+        service = cast("ExtractionService", request.app.state.extraction_service)
+        correlation_id = getattr(request.state, "correlation_id", None)
+
+        # Pre-flight: resolve the schema before opening the SSE response so
+        # an unknown schema_name (or mismatched schema_version) returns
+        # 404 with a normal JSON body rather than an empty event-stream.
+        try:
+            resolve_schema(body.schema_name, body.schema_version)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+        async def sse_generator() -> AsyncIterator[bytes]:
+            try:
+                async for ev in service.extract_stream(
+                    document_text=body.document_text,
+                    schema_name=body.schema_name,
+                    schema_version=body.schema_version,
+                    document_id=body.document_id,
+                    correlation_id=correlation_id,
+                ):
+                    yield _format_sse(ev)
+            except ExtractionError as exc:
+                LOGGER.exception("stream extraction failed")
+                yield _format_sse({"type": "error", "detail": str(exc)})
+
+        return StreamingResponse(sse_generator(), media_type="text/event-stream")
+
+    extract_stream_endpoint = (
+        limiter.limit(rate_limit)(extract_stream)
+        if (limiter is not None and rate_limit)
+        else extract_stream
+    )
+    router.add_api_route(
+        "/extract/stream",
+        extract_stream_endpoint,
+        methods=["POST"],
+        responses={
+            404: {"model": ErrorResponse, "description": "Unknown schema_name"},
+            200: {
+                "description": (
+                    "Server-Sent Events stream: `event: chunk` text deltas, then "
+                    "exactly one `event: result` (success) or `event: error` "
+                    "(parse/validation failure on the accumulated text)."
+                ),
+                "content": {"text/event-stream": {}},
+            },
+        },
+        tags=["extraction"],
+    )
+
     return router
+
+
+def _format_sse(event: dict[str, object]) -> bytes:
+    """Serialise an ``extract_stream`` event into one SSE frame."""
+    event_type = event["type"]
+    if event_type == "chunk":
+        data = json.dumps({"text": event["text"]})
+    elif event_type == "result":
+        data = json.dumps(event["result"])
+    elif event_type == "error":
+        data = json.dumps({"detail": event["detail"]})
+    else:  # pragma: no cover — guarded at the producer site
+        msg = f"unknown stream event type: {event_type!r}"
+        raise ValueError(msg)
+    return f"event: {event_type}\ndata: {data}\n\n".encode()
