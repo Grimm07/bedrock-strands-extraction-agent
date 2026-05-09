@@ -149,14 +149,20 @@ of a successful injection significantly.
 
 **Negative / accepted**
 
-- **Vision mode has no grounding.** ADR-0008 disabled citation
-  verification for vision extractions. A malicious image with adversarial
-  text (visible or low-contrast) can drive fabricated values with
-  high confidence. The system-prompt trust-boundary paragraph is the
-  *only* in-prompt defence; semantic validators catch format errors only.
-  Closing this gap is tracked as a Critical roadmap item ("Ground the
-  vision path"); the candidate fix is a second-pass model call asking
-  "is each emitted value actually present in the image?".
+- **Vision mode has second-pass grounding (added after this ADR was
+  first filed).** Every `/extract/document` image extraction now runs a
+  second `invoke_multimodal` call with a verification prompt
+  (`templates/verify_grounding.j2`) asking the model to confirm each
+  candidate value is genuinely present in the attached image. Ungrounded
+  fields surface as `vision_grounding_failures` and trigger the retry
+  loop with vision-specific instructions. The verifier fails open on
+  malformed responses (the first-pass schema validation still constrains
+  the result). Doubles per-vision-request latency and cost; accepted in
+  the threat model because the alternative is human review, which is
+  out of scope (the automation goal). The verifier itself receives the
+  same trust-boundary instruction (image text is data, not commands), so
+  a clever adversarial image cannot trivially talk the verifier into
+  always saying "present=true".
 - **MCP tool responses are sanitised but only at the text-channel layer.**
   Each MCP tool now passes through `_SanitisingMCPTool` (added after this
   ADR was first filed): each text content block is truncated to

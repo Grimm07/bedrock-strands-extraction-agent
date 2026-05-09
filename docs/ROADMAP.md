@@ -33,6 +33,13 @@ was scoped out of an earlier release to keep that release reviewable.
   `asyncio.to_thread`, so the Bedrock round-trip no longer blocks the
   FastAPI event loop. The threadpool unblocks the loop today; native
   async via `Agent.invoke_async` is reserved for the streaming path.
+- **Vision-mode grounding** (closes the last Critical follow-on from
+  ADR-0011): every `/extract/document` image extraction now runs a
+  second `invoke_multimodal` call with a verification prompt asking the
+  model to confirm each candidate value is genuinely present in the
+  attached image. Ungrounded fields trigger a retry with vision-specific
+  feedback. Doubles per-vision-request latency/cost; accepted given the
+  automation goal (no human-review fallback in scope).
 - **LLM-security defence-in-depth (Critical follow-ons to ADR-0011)**:
   (a) `bedrock_strands_agent.logging._RedactionFilter` masks US PII on every
   log record's formatted message AND `extra={...}` attributes (closes the

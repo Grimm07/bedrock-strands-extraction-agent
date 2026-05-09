@@ -59,6 +59,50 @@ def test_retry_prompt_includes_validator_failures() -> None:
     assert "not a valid SSN" in rendered
 
 
+def test_verify_grounding_template_lists_candidates_with_values() -> None:
+    """Vision-mode grounding verifier prompt names every candidate field
+    + value pair so the model can decide presence one by one. Pins the
+    contract that drives the second-pass model call.
+    """
+    schema = get_schema("invoice")
+    rendered = PromptRenderer().verify_grounding(
+        schema=schema,
+        candidates=[
+            {"name": "invoice_number", "value": "INV-1"},
+            {"name": "total", "value": 100},
+        ],
+    )
+    assert "invoice_number" in rendered
+    assert '"INV-1"' in rendered
+    assert "total" in rendered
+    assert "100" in rendered
+    # Trust-boundary paragraph must be present — image content is untrusted.
+    assert "UNTRUSTED" in rendered.upper()
+    # Pin the response contract so the parser stays in sync with the prompt.
+    assert "groundings" in rendered
+    assert "present" in rendered
+
+
+def test_retry_prompt_includes_vision_grounding_failures() -> None:
+    """Vision-mode retry feedback (ADR-0011): when the second-pass grounder
+    flags ungrounded values, the retry prompt names each one with vision-
+    specific instructions to look at the image again.
+    """
+    schema = get_schema("invoice")
+    rendered = PromptRenderer().retry(
+        schema=schema,
+        document_text="",  # vision mode has no document_text
+        vision_grounding_failures=[{"name": "vendor_name", "value": "attacker@evil.com"}],
+    )
+    assert "vendor_name" in rendered
+    assert "attacker@evil.com" in rendered
+    assert "image" in rendered.lower()
+    # Must NOT route the model to "re-quote a longer excerpt" — that's the
+    # text-mode value_anchor wording. Pin the channel split.
+    section = rendered.split("vision")[-1] if "vision" in rendered.lower() else rendered
+    assert "longer excerpt" not in section
+
+
 def test_retry_prompt_includes_value_anchor_failures() -> None:
     """Schema-confusion attack feedback (ADR-0011): the retry prompt must
     name each field whose value is not present in its source_excerpt so

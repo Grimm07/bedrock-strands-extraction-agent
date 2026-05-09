@@ -267,6 +267,237 @@ def test_extract_document_scanned_pdf_routes_to_vision(
     assert captured_image_count["count"] == 2
 
 
+def test_extract_document_vision_grounding_failure_triggers_retry(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0011 vision-mode grounding (Critical follow-on): when the
+    second-pass model call flags a candidate field as NOT present in the
+    image, the extraction loop must re-prompt the model. A successful
+    retry ships the corrected value, not the fabricated original.
+
+    Sequencing:
+      1. invoke_multimodal call 1: model returns fabricated `vendor_name`.
+      2. invoke_multimodal call 2: grounding verifier flags vendor_name
+         as `present=false`.
+      3. Loop kicks a retry.
+      4. invoke_multimodal call 3: model returns corrected vendor_name.
+      5. invoke_multimodal call 4: grounding verifier confirms all present.
+      6. Result ships with the corrected value.
+    """
+    fabricated = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date: 2026-01-01"},'
+        '{"name": "vendor_name", "value": "FAKE", "confidence": 0.9, '
+        '"source_excerpt": "Vendor: FAKE"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To: B"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total: 100"}'
+        "]}"
+    )
+    grounding_flag_vendor = (
+        '{"groundings": ['
+        '{"name": "invoice_number", "present": true},'
+        '{"name": "invoice_date", "present": true},'
+        '{"name": "vendor_name", "present": false},'
+        '{"name": "bill_to", "present": true},'
+        '{"name": "total", "present": true}'
+        "]}"
+    )
+    corrected = fabricated.replace('"value": "FAKE"', '"value": "Real Vendor"')
+    grounding_all_present = grounding_flag_vendor.replace('"present": false', '"present": true')
+
+    responses = iter([fabricated, grounding_flag_vendor, corrected, grounding_all_present])
+
+    def _fake_invoke_multimodal(**_kw: object) -> str:
+        return next(responses)
+
+    monkeypatch.setattr(
+        "bedrock_strands_agent.extraction.service.invoke_multimodal",
+        _fake_invoke_multimodal,
+    )
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice"},
+            files={"file": ("test.png", _png_upload_bytes(), "image/png")},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_name = {f["name"]: f["value"] for f in body["fields"]}
+    # The retry succeeded: the fabricated value did NOT ship.
+    assert by_name["vendor_name"] == "Real Vendor"
+    assert by_name["vendor_name"] != "FAKE"
+
+
+def test_extract_document_grounding_transport_failure_fails_open(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A throttled / network-failed verifier (Bedrock ClientError) must NOT
+    crash the whole extraction. The first-pass result still ships.
+
+    Without this, a transient verifier outage 5xx's the whole request even
+    though the extraction itself succeeded — the opposite of fail-open.
+    """
+    from botocore.exceptions import ClientError
+
+    extraction_payload = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date"},'
+        '{"name": "vendor_name", "value": "Acme", "confidence": 0.9, '
+        '"source_excerpt": "Vendor"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total"}'
+        "]}"
+    )
+    call_index = {"n": 0}
+
+    def _fake(**_kw: object) -> str:
+        call_index["n"] += 1
+        if call_index["n"] == 1:
+            return extraction_payload
+        # Second call (the verifier) raises Bedrock ClientError to simulate
+        # throttling-after-retry-exhaustion.
+        raise ClientError(
+            error_response={
+                "Error": {"Code": "ThrottlingException"},
+                "ResponseMetadata": {"HTTPStatusCode": 429},
+            },
+            operation_name="Converse",
+        )
+
+    monkeypatch.setattr("bedrock_strands_agent.extraction.service.invoke_multimodal", _fake)
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice"},
+            files={"file": ("test.png", _png_upload_bytes(), "image/png")},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_name = {f["name"]: f["value"] for f in body["fields"]}
+    assert by_name["vendor_name"] == "Acme"
+
+
+def test_extract_document_grounding_failure_persists_yields_ungrounded_warning(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the verifier flags the same field on every retry, the loop must
+    eventually ship the result (auto-no-human-review goal) but mark the
+    field with an `UNGROUNDED:<name>` warning so downstream consumers can
+    route those records to a different bucket. Without this the only
+    visible signal is the trace span — fine for SREs, useless for callers.
+    """
+    fabricated = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date"},'
+        '{"name": "vendor_name", "value": "FAKE", "confidence": 0.9, '
+        '"source_excerpt": "V"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total"}'
+        "]}"
+    )
+    grounding_flag_vendor = (
+        '{"groundings": ['
+        '{"name": "invoice_number", "present": true},'
+        '{"name": "invoice_date", "present": true},'
+        '{"name": "vendor_name", "present": false},'
+        '{"name": "bill_to", "present": true},'
+        '{"name": "total", "present": true}'
+        "]}"
+    )
+    # 3 attempts x 2 calls each = 6 responses. Vendor grounding always fails.
+    responses = iter(
+        [
+            fabricated,
+            grounding_flag_vendor,
+            fabricated,
+            grounding_flag_vendor,
+            fabricated,
+            grounding_flag_vendor,
+        ]
+    )
+
+    def _fake(**_kw: object) -> str:
+        return next(responses)
+
+    monkeypatch.setattr("bedrock_strands_agent.extraction.service.invoke_multimodal", _fake)
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice"},
+            files={"file": ("test.png", _png_upload_bytes(), "image/png")},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Result ships (auto-no-human-review) but the per-field miss must be
+    # surfaced in warnings so callers can route accordingly.
+    assert "UNGROUNDED:vendor_name" in body["warnings"]
+
+
+def test_extract_document_grounding_parse_failure_fails_open(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the second-pass grounding verifier returns malformed JSON, the
+    extraction must NOT be invalidated. A verifier that can't speak the
+    contract is treated as silent — the first-pass schema validation still
+    constrains the result. Documented in `_verify_vision_grounding`.
+    """
+    extraction_payload = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date"},'
+        '{"name": "vendor_name", "value": "Acme", "confidence": 0.9, '
+        '"source_excerpt": "Vendor"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total"}'
+        "]}"
+    )
+    responses = iter([extraction_payload, "this is not JSON at all"])
+
+    def _fake(**_kw: object) -> str:
+        return next(responses)
+
+    monkeypatch.setattr("bedrock_strands_agent.extraction.service.invoke_multimodal", _fake)
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice"},
+            files={"file": ("test.png", _png_upload_bytes(), "image/png")},
+        )
+    # Fail-open: the extraction's first-pass result ships even when the
+    # grounding verifier returns garbage.
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_name = {f["name"]: f["value"] for f in body["fields"]}
+    assert by_name["vendor_name"] == "Acme"
+
+
 def test_extract_document_unsupported_mime_returns_422(
     settings: Settings, stub_extraction_service: ExtractionService
 ) -> None:

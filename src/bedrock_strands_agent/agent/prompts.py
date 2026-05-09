@@ -21,7 +21,13 @@ if TYPE_CHECKING:
     from bedrock_strands_agent.extraction.models import FormSchema
 
 _VERSION_RE: Final = re.compile(r"\{#\s*template_version:\s*(?P<v>[\w.\-]+)\s*#\}")
-_TEMPLATE_NAMES: Final = ("system.j2", "extract.j2", "retry.j2", "extract_image.j2")
+_TEMPLATE_NAMES: Final = (
+    "system.j2",
+    "extract.j2",
+    "retry.j2",
+    "extract_image.j2",
+    "verify_grounding.j2",
+)
 _UNVERSIONED: Final = "0.0.0"
 
 
@@ -83,6 +89,24 @@ class PromptRenderer:
         """
         return self._env.get_template("extract_image.j2").render(schema=schema)
 
+    def verify_grounding(
+        self,
+        *,
+        schema: FormSchema,
+        candidates: list[dict[str, Any]],
+    ) -> str:
+        """Render the second-pass grounding-verification prompt for vision mode.
+
+        Used by :meth:`ExtractionService._verify_vision_grounding` after the
+        first vision extraction completes. The model is asked to verify each
+        candidate's ``value`` is genuinely present in the attached image(s);
+        ungrounded fields surface as ``vision_grounding_failures`` and trigger
+        a retry. See ADR-0011 ("Vision-mode grounding") for the rationale.
+        """
+        return self._env.get_template("verify_grounding.j2").render(
+            schema=schema, candidates=candidates
+        )
+
     def retry(
         self,
         *,
@@ -92,8 +116,9 @@ class PromptRenderer:
         citation_failures: list[dict[str, Any]] | None = None,
         validator_failures: list[dict[str, Any]] | None = None,
         value_anchor_failures: list[dict[str, Any]] | None = None,
+        vision_grounding_failures: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Render a retry prompt with up to four sections of error context.
+        """Render a retry prompt with up to five sections of error context.
 
         Args:
             schema: The schema being extracted.
@@ -106,6 +131,9 @@ class PromptRenderer:
                 fields where the excerpt IS verbatim in the document but the
                 emitted value is not contained inside that excerpt — the
                 schema-confusion case from ADR-0011.
+            vision_grounding_failures: Dicts ``{"name", "value"}`` for vision-
+                mode fields the second-pass grounding verifier flagged as
+                NOT present in the attached image. Vision-only.
         """
         return self._env.get_template("retry.j2").render(
             schema=schema,
@@ -114,4 +142,5 @@ class PromptRenderer:
             citation_failures=citation_failures or [],
             validator_failures=validator_failures or [],
             value_anchor_failures=value_anchor_failures or [],
+            vision_grounding_failures=vision_grounding_failures or [],
         )

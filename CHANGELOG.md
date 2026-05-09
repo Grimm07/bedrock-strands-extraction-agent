@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase D — Vision-mode grounding)
+
+- **Vision-mode second-pass grounding** ([ADR-0011](docs/adr/0011-prompt-injection-threat-model.md)
+  Critical follow-on closed): every `/extract/document` image extraction
+  now runs a second `invoke_multimodal` call with a verification prompt
+  (`templates/verify_grounding.j2`) asking the model to confirm each
+  candidate value is genuinely present in the attached image. Ungrounded
+  fields surface as `vision_grounding_failures` and trigger the existing
+  retry loop with vision-specific instructions in `templates/retry.j2`
+  (v3.2.0). Failure to parse the verifier's response fails open — the
+  first-pass schema validation still constrains the result. Doubles
+  per-vision-request latency / cost; accepted given the automation goal
+  named in the threat-model discussion.
+- New `PromptRenderer.verify_grounding(schema, candidates)` and
+  `ExtractionService._verify_vision_grounding`. The retry loop's
+  `_run_extraction_loop` gains an optional `post_coerce_hook` so vision
+  mode can plug grounding in without coupling the text-mode path to it.
+- `extraction.attempt` and `extraction.vision_grounding` spans expose
+  per-attempt grounding-failure counts.
+
 ### Added (Phase D — LLM-security defence-in-depth)
 
 - **Logging-side PII redaction filter** (`bedrock_strands_agent.logging._RedactionFilter`):

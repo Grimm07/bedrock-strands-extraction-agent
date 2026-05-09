@@ -24,6 +24,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from botocore.exceptions import BotoCoreError, ClientError
 from opentelemetry import trace
 
 from bedrock_strands_agent.agent.bedrock_retry import invoke_with_retry
@@ -278,6 +279,14 @@ class ExtractionService:
                 top_p=settings.bedrock_top_p,
             )
 
+        def grounding_hook(fields: list[ExtractedField]) -> list[dict[str, Any]]:
+            return self._verify_vision_grounding(
+                fields=fields,
+                schema=schema,
+                images=images,
+                image_format=image_format,
+            )
+
         return self._run_extraction_loop(
             schema=schema,
             document_text="",  # vision mode disables citation verification
@@ -287,7 +296,84 @@ class ExtractionService:
             extra_span_attrs={"extraction.image_count": len(images)},
             document_id=document_id,
             correlation_id=correlation_id,
+            post_coerce_hook=grounding_hook,
         )
+
+    def _verify_vision_grounding(
+        self,
+        *,
+        fields: list[ExtractedField],
+        schema: FormSchema,
+        images: tuple[bytes, ...],
+        image_format: ImageFormat,
+    ) -> list[dict[str, Any]]:
+        """Second-pass grounding check on vision-mode extractions.
+
+        Runs a fresh ``invoke_multimodal`` call with the image plus a
+        verification prompt asking the model to confirm whether each
+        candidate ``value`` is genuinely present in the image. Returns a
+        list of ``{"name", "value"}`` dicts for fields the model marked
+        ``present=false`` — these surface as ``vision_grounding_failures``
+        in the retry loop and trigger a re-extraction.
+
+        On parse failure (the verifier returned non-JSON or a malformed
+        groundings list), returns an empty list — i.e. fail-open. The
+        rationale: a verifier that can't speak the contract should not
+        invalidate every extraction. The first-pass schema validation
+        already constrains the result; grounding is defence-in-depth.
+        """
+        candidates = [
+            {"name": f.name, "value": f.value} for f in fields if f.value not in (None, "")
+        ]
+        if not candidates:
+            return []
+        settings = self._bundle.settings
+        prompt = self._bundle.prompt_renderer.verify_grounding(schema=schema, candidates=candidates)
+        with _TRACER.start_as_current_span("extraction.vision_grounding") as gspan:
+            gspan.set_attribute("extraction.candidate_count", len(candidates))
+            try:
+                raw = invoke_multimodal(
+                    region=settings.aws_region,
+                    model_id=settings.bedrock_model_id,
+                    prompt=prompt,
+                    images=images,
+                    image_format=image_format,
+                    max_tokens=settings.bedrock_max_tokens,
+                    temperature=settings.bedrock_temperature,
+                    top_p=settings.bedrock_top_p,
+                )
+            except (BotoCoreError, ClientError) as exc:
+                # Transport failure (throttle, validation, networking) on the
+                # verifier call: fail open. The extraction's first-pass schema
+                # validation still constrains the result; we'd rather ship
+                # unverified than block on a transient verifier outage.
+                LOGGER.warning("vision-grounding verifier transport failure: %s", exc)
+                gspan.set_attribute("extraction.grounding_transport_failed", True)
+                return []
+            try:
+                payload = self._parse_json(raw)
+            except ExtractionError as exc:
+                LOGGER.warning("vision-grounding verifier returned malformed JSON: %s", exc)
+                gspan.set_attribute("extraction.grounding_parse_failed", True)
+                return []
+            groundings_node = payload.get("groundings")
+            if not isinstance(groundings_node, list):
+                LOGGER.warning("vision-grounding response missing 'groundings' list")
+                gspan.set_attribute("extraction.grounding_parse_failed", True)
+                return []
+            value_by_name: dict[str, object] = {f.name: f.value for f in fields}
+            failures: list[dict[str, Any]] = []
+            for entry in groundings_node:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                present = entry.get("present")
+                if not isinstance(name, str):
+                    continue
+                if present is False and name in value_by_name:
+                    failures.append({"name": name, "value": value_by_name[name]})
+            gspan.set_attribute("extraction.grounding_failures", len(failures))
+            return failures
 
     def _run_extraction_loop(
         self,
@@ -300,6 +386,7 @@ class ExtractionService:
         extra_span_attrs: dict[str, Any],
         document_id: str | None,
         correlation_id: str | None,
+        post_coerce_hook: Callable[[list[ExtractedField]], list[dict[str, Any]]] | None = None,
     ) -> ExtractionResult:
         settings = self._bundle.settings
         started = time.perf_counter()
@@ -320,6 +407,7 @@ class ExtractionService:
             previous_citation_failures: list[dict[str, Any]] = []
             previous_validator_failures: list[dict[str, Any]] = []
             previous_value_anchor_failures: list[dict[str, Any]] = []
+            previous_vision_grounding_failures: list[dict[str, Any]] = []
 
             for attempt in range(self._max_retries + 1):
                 with _TRACER.start_as_current_span(
@@ -332,12 +420,13 @@ class ExtractionService:
                         LOGGER.warning(
                             "Re-prompting after validation issues (mode=%s): "
                             "errors=%d citation_fails=%d validator_fails=%d "
-                            "value_anchor_fails=%d",
+                            "value_anchor_fails=%d vision_grounding_fails=%d",
                             mode,
                             len(previous_validation_errors),
                             len(previous_citation_failures),
                             len(previous_validator_failures),
                             len(previous_value_anchor_failures),
+                            len(previous_vision_grounding_failures),
                         )
                         retry_prompt = self._bundle.prompt_renderer.retry(
                             schema=schema,
@@ -346,6 +435,7 @@ class ExtractionService:
                             citation_failures=previous_citation_failures,
                             validator_failures=previous_validator_failures,
                             value_anchor_failures=previous_value_anchor_failures,
+                            vision_grounding_failures=previous_vision_grounding_failures,
                         )
                         raw = invoke_fn(retry_prompt)
 
@@ -356,6 +446,7 @@ class ExtractionService:
                         previous_citation_failures = []
                         previous_validator_failures = []
                         previous_value_anchor_failures = []
+                        previous_vision_grounding_failures = []
                         sub_span.add_event("attempt.failed", {"reason": "json-parse-failed"})
                         continue
 
@@ -366,20 +457,47 @@ class ExtractionService:
                         validator_failures,
                         value_anchor_failures,
                     ) = self._coerce_fields(payload, schema, document_text=document_text)
+                    # Vision-mode grounding (ADR-0011): a second model call
+                    # confirms each candidate value is actually present in the
+                    # image. Ungrounded fields trigger a retry with vision-
+                    # specific instructions in the retry prompt.
+                    vision_grounding_failures: list[dict[str, Any]] = (
+                        post_coerce_hook(fields) if post_coerce_hook is not None else []
+                    )
                     sub_span.set_attribute("attempt.warnings", len(warnings))
                     sub_span.set_attribute("attempt.citation_failures", len(citation_failures))
                     sub_span.set_attribute("attempt.validator_failures", len(validator_failures))
                     sub_span.set_attribute(
                         "attempt.value_anchor_failures", len(value_anchor_failures)
                     )
+                    sub_span.set_attribute(
+                        "attempt.vision_grounding_failures", len(vision_grounding_failures)
+                    )
 
                     fatal = [w for w in warnings if w.startswith("MISSING_REQUIRED:")]
                     is_last_attempt = attempt == self._max_retries
-                    # Value-anchor failures are also fatal — they indicate
-                    # fabricated values with verbatim citations, the schema-
-                    # confusion attack documented in ADR-0011.
+                    # Value-anchor and vision-grounding failures are fatal —
+                    # they indicate fabricated values (text-mode citation
+                    # mismatch or vision-mode grounding miss). See ADR-0011.
                     has_anchor_failure = bool(value_anchor_failures)
-                    if (not fatal and not has_anchor_failure) or is_last_attempt:
+                    has_grounding_failure = bool(vision_grounding_failures)
+                    if (
+                        not fatal and not has_anchor_failure and not has_grounding_failure
+                    ) or is_last_attempt:
+                        # On retry-budget exhaustion with grounding/anchor
+                        # failures still open, surface the per-field misses
+                        # to the caller via warnings so downstream consumers
+                        # can route those records (a system whose explicit
+                        # goal is automation-no-human-review needs a JSON
+                        # signal, not just a span attribute). See ADR-0011.
+                        if is_last_attempt:
+                            warnings = list(warnings)
+                            warnings.extend(
+                                f"UNGROUNDED:{f['name']}" for f in vision_grounding_failures
+                            )
+                            warnings.extend(
+                                f"UNANCHORED:{f['name']}" for f in value_anchor_failures
+                            )
                         elapsed_ms = int((time.perf_counter() - started) * 1000)
                         span.set_attribute("extraction.latency_ms", elapsed_ms)
                         span.set_attribute("extraction.field_count", len(fields))
@@ -402,6 +520,7 @@ class ExtractionService:
                     previous_citation_failures = citation_failures
                     previous_validator_failures = validator_failures
                     previous_value_anchor_failures = value_anchor_failures
+                    previous_vision_grounding_failures = vision_grounding_failures
 
             raise ExtractionError(
                 "Extraction failed after retries: " + "; ".join(previous_validation_errors)
