@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7-labs
 
 # ---- builder ---------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:0.5.8-python3.12-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.9.30-python3.12-bookworm-slim AS builder
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
