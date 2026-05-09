@@ -28,6 +28,11 @@ was scoped out of an earlier release to keep that release reviewable.
   pin the request to a specific registered schema version. Pin-or-fail:
   mismatch returns 404. Omitting the field tracks HEAD of the registry
   (existing behaviour preserved).
+- **Non-blocking route handlers**: `/extract` and `/extract/document`
+  now offload `ExtractionService.extract` / `extract_document` via
+  `asyncio.to_thread`, so the Bedrock round-trip no longer blocks the
+  FastAPI event loop. The threadpool unblocks the loop today; native
+  async via `Agent.invoke_async` is reserved for the streaming path.
 - **ADRs 0005–0010 backfilled**: 0005 (Bedrock as default provider),
   0006 (JSON-only response contract), 0007 (MCP-as-tools), 0009 (bounded
   self-correcting retry; replaces the placeholder "retry-once" name with
@@ -70,12 +75,6 @@ was scoped out of an earlier release to keep that release reviewable.
 Long extractions return only after the model completes. Add a
 `/extract/stream` SSE endpoint that streams partial fields as the model
 emits them. Strands supports streaming via `Agent.stream_async`.
-
-### Async agent invocation
-
-`Agent.__call__` is sync; the FastAPI route blocks an event-loop slot per
-request. Switch to `Agent.acall` (or run the sync call in a thread pool)
-once the SDK API stabilises.
 
 ## Not yet shipped — observability / quality
 

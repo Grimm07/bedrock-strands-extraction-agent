@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -68,11 +69,17 @@ def build_router(
         return SchemasResponse(schemas=items)
 
     async def extract(body: ExtractRequestBody, request: Request) -> ExtractionResult:
-        """Run an extraction against the named schema."""
+        """Run an extraction against the named schema.
+
+        ``ExtractionService.extract`` is sync (it wraps the Strands ``Agent``
+        which we still drive synchronously); offload to a worker thread so
+        the FastAPI event loop doesn't block on the Bedrock round-trip.
+        """
         service = cast("ExtractionService", request.app.state.extraction_service)
         correlation_id = getattr(request.state, "correlation_id", None)
         try:
-            return service.extract(
+            return await asyncio.to_thread(
+                service.extract,
                 document_text=body.document_text,
                 schema_name=body.schema_name,
                 schema_version=body.schema_version,
@@ -116,7 +123,8 @@ def build_router(
         correlation_id = getattr(request.state, "correlation_id", None)
         contents = await file.read()
         try:
-            return service.extract_document(
+            return await asyncio.to_thread(
+                service.extract_document,
                 upload_bytes=contents,
                 content_type=file.content_type or "application/octet-stream",
                 schema_name=schema_name,
