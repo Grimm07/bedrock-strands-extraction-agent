@@ -1,0 +1,70 @@
+# Paste this constant into
+# `src/bedrock_strands_agent/extraction/schemas/examples.py`,
+# above the `register_schema(IRS_W9)` line, then add
+# `register_schema(IRS_K1_1065)` to the bottom of the file.
+
+IRS_K1_1065 = FormSchema(
+    name="irs_k1_1065",
+    version="1.0.0",
+    description=(
+        "IRS Schedule K-1 (Form 1065): Partner's Share of Income, "
+        "Deductions, Credits, etc. (US). Captures partnership and "
+        "partner identifying info plus the partner's share of "
+        "ordinary business income, interest, dividends, and capital."
+    ),
+    fields=(
+        FieldDefinition(
+            name="tax_year",
+            description="Tax year the K-1 covers, four-digit integer (e.g. 2025).",
+            type=FieldType.INTEGER,
+            required=True,
+            pattern=r"^\d{4}$",
+        ),
+        FieldDefinition(
+            name="partnership_name",
+            description="Name of the partnership filing Form 1065.",
+            type=FieldType.STRING,
+            required=True,
+        ),
+        FieldDefinition(
+            name="partnership_ein",
+            description="Partnership EIN, formatted 99-9999999.",
+            type=FieldType.EIN,
+            required=True,
+            pattern=r"^\d{2}-\d{7}$",
+        ),
+        FieldDefinition(
+            name="partner_name",
+            description="Name of the partner this K-1 is issued to.",
+            type=FieldType.STRING,
+            required=True,
+        ),
+        FieldDefinition(
+            name="partner_tin",
+            description="Partner SSN (999-99-9999) or EIN (99-9999999).",
+            type=FieldType.STRING,
+            required=True,
+            pattern=r"^(\d{3}-\d{2}-\d{4}|\d{2}-\d{7})$",
+        ),
+        FieldDefinition(
+            name="ordinary_business_income",
+            description="Box 1: Ordinary business income (loss), decimal currency.",
+            type=FieldType.CURRENCY,
+        ),
+        FieldDefinition(
+            name="interest_income",
+            description="Box 5: Interest income, decimal currency.",
+            type=FieldType.CURRENCY,
+        ),
+        FieldDefinition(
+            name="ordinary_dividends",
+            description="Box 6a: Ordinary dividends, decimal currency.",
+            type=FieldType.CURRENCY,
+        ),
+        FieldDefinition(
+            name="ending_capital_account",
+            description="Partner's ending capital account balance (Item L), decimal currency.",
+            type=FieldType.CURRENCY,
+        ),
+    ),
+)
