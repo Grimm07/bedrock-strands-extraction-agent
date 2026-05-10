@@ -39,6 +39,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Technology stack: tech-stack.md
   - Roadmap: ROADMAP.md
   - Contributing: CONTRIBUTING.md
   - Service Level Objectives: slos.md
