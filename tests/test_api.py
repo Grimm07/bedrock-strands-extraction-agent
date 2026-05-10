@@ -498,6 +498,126 @@ def test_extract_document_grounding_parse_failure_fails_open(
     assert by_name["vendor_name"] == "Acme"
 
 
+def test_extract_document_grounding_partially_malformed_fails_open(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grounding response that is JSON-valid but schema-mismatched fails
+    the WHOLE response (no partial-tolerance) and falls open.
+
+    Pins the post-Pydantic contract: any single deviation (here, one
+    entry missing the required `present` key alongside well-formed
+    siblings) causes ValidationError → empty failures → first-pass
+    extraction ships unverified. Previously the walker silently skipped
+    just the malformed entry and kept the others; the new strict
+    behaviour is explicitly safer at the threat-model boundary
+    (the verifier sits between an attacker-controlled image and our
+    trust decisions, so loose typing favours an attacker).
+    """
+    extraction_payload = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date"},'
+        '{"name": "vendor_name", "value": "FAKE", "confidence": 0.9, '
+        '"source_excerpt": "V"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total"}'
+        "]}"
+    )
+    # vendor_name entry is missing the `present` key — would have been
+    # flagged-as-failure under the old walker; under the new model
+    # validation, the entire response is rejected and we fail open.
+    grounding_partial = (
+        '{"groundings": ['
+        '{"name": "invoice_number", "present": true},'
+        '{"name": "invoice_date", "present": true},'
+        '{"name": "vendor_name"},'
+        '{"name": "bill_to", "present": true},'
+        '{"name": "total", "present": true}'
+        "]}"
+    )
+    responses = iter([extraction_payload, grounding_partial])
+
+    def _fake(**_kw: object) -> str:
+        return next(responses)
+
+    monkeypatch.setattr("bedrock_strands_agent.extraction.service.invoke_multimodal", _fake)
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice"},
+            files={"file": ("test.png", _png_upload_bytes(), "image/png")},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_name = {f["name"]: f["value"] for f in body["fields"]}
+    # The fabricated vendor_name ships because the verifier failed open
+    # — there's no UNGROUNDED:vendor_name warning either, because
+    # vision_grounding_failures was empty.
+    assert by_name["vendor_name"] == "FAKE"
+    assert "UNGROUNDED:vendor_name" not in body["warnings"]
+
+
+def test_extract_document_grounding_rejects_loose_truthy_present(
+    settings: Settings,
+    stub_extraction_service: ExtractionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`present` must be a strict JSON `true`/`false`; loose-truthy values
+    are rejected at validation rather than coerced.
+
+    Without `StrictBool` an attacker-influenced verifier returning
+    ``"present": "yes"`` (or ``1``) for a fabricated value would silently
+    coerce to ``True`` and the fabrication would slip through. With
+    `StrictBool`, the whole response fails validation — the same
+    fail-open path as a parse error.
+    """
+    extraction_payload = (
+        '{"fields": ['
+        '{"name": "invoice_number", "value": "X", "confidence": 0.9, '
+        '"source_excerpt": "INVOICE #X"},'
+        '{"name": "invoice_date", "value": "2026-01-01", "confidence": 0.9, '
+        '"source_excerpt": "Date"},'
+        '{"name": "vendor_name", "value": "Acme", "confidence": 0.9, '
+        '"source_excerpt": "V"},'
+        '{"name": "bill_to", "value": "B", "confidence": 0.9, '
+        '"source_excerpt": "Bill To"},'
+        '{"name": "total", "value": 100, "confidence": 0.9, '
+        '"source_excerpt": "Total"}'
+        "]}"
+    )
+    grounding_loose = (
+        '{"groundings": ['
+        '{"name": "invoice_number", "present": "yes"},'
+        '{"name": "invoice_date", "present": "yes"},'
+        '{"name": "vendor_name", "present": "yes"},'
+        '{"name": "bill_to", "present": "yes"},'
+        '{"name": "total", "present": "yes"}'
+        "]}"
+    )
+    responses = iter([extraction_payload, grounding_loose])
+
+    def _fake(**_kw: object) -> str:
+        return next(responses)
+
+    monkeypatch.setattr("bedrock_strands_agent.extraction.service.invoke_multimodal", _fake)
+    with _client(settings, stub_extraction_service) as c:
+        r = c.post(
+            "/extract/document",
+            data={"schema_name": "invoice"},
+            files={"file": ("test.png", _png_upload_bytes(), "image/png")},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_name = {f["name"]: f["value"] for f in body["fields"]}
+    assert by_name["vendor_name"] == "Acme"
+
+
 def test_extract_document_unsupported_mime_returns_422(
     settings: Settings, stub_extraction_service: ExtractionService
 ) -> None:

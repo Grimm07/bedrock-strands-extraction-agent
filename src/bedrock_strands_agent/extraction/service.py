@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import BotoCoreError, ClientError
 from opentelemetry import trace
+from pydantic import BaseModel, ConfigDict, StrictBool, ValidationError
 
 from bedrock_strands_agent.agent.bedrock_retry import invoke_with_retry
 from bedrock_strands_agent.extraction.citations import value_anchored_in_excerpt, verify_excerpt
@@ -68,6 +69,45 @@ _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 # inside ``value_anchored_in_excerpt`` itself; this set is only for the
 # string-returning normalising types.
 _NORMALISING_STRING_TYPES: frozenset[FieldType] = frozenset({FieldType.DATE})
+
+
+class _GroundingItem(BaseModel):
+    """Schema-enforced shape of a single grounding-verifier entry.
+
+    ``extra='forbid'`` rejects any unexpected keys (a model that returns
+    ``{"name":..., "present":..., "explanation":"..."}`` fails validation
+    rather than silently dropping the extra). ``StrictBool`` rejects
+    coerced values like ``"yes"`` / ``1`` / ``"on"``: these would have
+    been treated as ``True`` (missing-failure!) under default Pydantic
+    coercion. Strict mode here is deliberate — the verifier sits at a
+    security-relevant boundary where loose typing favours an attacker.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    present: StrictBool
+
+
+class _GroundingResponse(BaseModel):
+    """The full grounding-verifier response: a list of per-field decisions.
+
+    Pydantic validation (with ``extra='forbid'`` here AND on
+    ``_GroundingItem``) replaces the previous hand-rolled
+    ``isinstance(entry, dict) and isinstance(entry.get('name'), str)``
+    walker. Behavioural change worth calling out: any deviation —
+    missing key, wrong type, extra key — fails the WHOLE response and
+    falls back to "no failures" (fail open). Previously the walker
+    silently skipped malformed entries while keeping the well-formed
+    ones. The new strict-and-fail-open contract is safer at the
+    threat-model boundary; the eventual migration to
+    ``BedrockModel.structured_output`` would force the shape at the
+    model layer instead of post-parse.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    groundings: list[_GroundingItem]
 
 
 class ExtractionError(RuntimeError):
@@ -316,11 +356,15 @@ class ExtractionService:
         ``present=false`` — these surface as ``vision_grounding_failures``
         in the retry loop and trigger a re-extraction.
 
-        On parse failure (the verifier returned non-JSON or a malformed
-        groundings list), returns an empty list — i.e. fail-open. The
-        rationale: a verifier that can't speak the contract should not
-        invalidate every extraction. The first-pass schema validation
-        already constrains the result; grounding is defence-in-depth.
+        Response shape is enforced via Pydantic (``_GroundingResponse``);
+        any deviation (missing key, wrong type, extra keys) is treated
+        as a parse failure and fails open. A future migration to
+        ``BedrockModel.structured_output`` would force the shape at the
+        model layer instead of post-parse — see CHANGELOG follow-on.
+        Fail-open rationale: a verifier that can't speak the contract
+        should not invalidate every extraction. The first-pass schema
+        validation already constrains the result; grounding is
+        defence-in-depth.
         """
         candidates = [
             {"name": f.name, "value": f.value} for f in fields if f.value not in (None, "")
@@ -356,22 +400,21 @@ class ExtractionService:
                 LOGGER.warning("vision-grounding verifier returned malformed JSON: %s", exc)
                 gspan.set_attribute("extraction.grounding_parse_failed", True)
                 return []
-            groundings_node = payload.get("groundings")
-            if not isinstance(groundings_node, list):
-                LOGGER.warning("vision-grounding response missing 'groundings' list")
+            try:
+                response = _GroundingResponse.model_validate(payload)
+            except ValidationError as exc:
+                LOGGER.warning(
+                    "vision-grounding verifier response did not match schema: %s",
+                    exc.errors(),
+                )
                 gspan.set_attribute("extraction.grounding_parse_failed", True)
                 return []
             value_by_name: dict[str, object] = {f.name: f.value for f in fields}
-            failures: list[dict[str, Any]] = []
-            for entry in groundings_node:
-                if not isinstance(entry, dict):
-                    continue
-                name = entry.get("name")
-                present = entry.get("present")
-                if not isinstance(name, str):
-                    continue
-                if present is False and name in value_by_name:
-                    failures.append({"name": name, "value": value_by_name[name]})
+            failures: list[dict[str, Any]] = [
+                {"name": item.name, "value": value_by_name[item.name]}
+                for item in response.groundings
+                if not item.present and item.name in value_by_name
+            ]
             gspan.set_attribute("extraction.grounding_failures", len(failures))
             return failures
 

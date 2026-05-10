@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (vision grounding contract tightening)
+
+- **Vision-grounding verifier response is now Pydantic-validated.**
+  The previous hand-rolled walker (`isinstance(entry, dict)` +
+  `isinstance(name, str)` + `entry.get("present")`) is replaced by
+  two private Pydantic models, both with `extra="forbid"` and
+  `present: StrictBool`:
+  - `_GroundingItem(name: str, present: StrictBool)`
+  - `_GroundingResponse(groundings: list[_GroundingItem])`
+  Validated through `_GroundingResponse.model_validate(...)` inside
+  `_verify_vision_grounding`. **Behaviour change**: any deviation
+  (missing key, wrong type, *extra* key, or a non-strict-bool like
+  `"yes"` / `1`) fails the **whole** response and falls back to "no
+  failures" (fail open) — previously the walker silently skipped
+  malformed entries while keeping the well-formed ones. The strict
+  + fail-open contract is safer at the threat-model boundary
+  (the verifier sits between an attacker-controlled image and our
+  trust decisions). New regression test:
+  `tests/test_api.py::test_extract_document_grounding_partially_malformed_fails_open`.
+  A future migration to `BedrockModel.structured_output` (which uses
+  Bedrock tool-use to force the shape at the model layer) is
+  deferred — it requires making `_verify_vision_grounding` async,
+  threading an `AsyncGenerator` consumer through the sync extraction
+  loop, and routing vision content through a `BedrockModel` instance
+  instead of the bespoke `invoke_multimodal` Converse call.
+
 ### Added (A2A protocol)
 
 - **A2A (agent-to-agent) protocol integration**
