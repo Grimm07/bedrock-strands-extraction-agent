@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (consumer-facing docs + ADR backfill)
+
+- **`docs/consumer-guide.md`**: end-to-end walkthrough for engineers
+  calling the service. Covers all four transports (HTTP JSON,
+  multipart, SSE streaming, A2A JSON-RPC) with request/response
+  shapes, schema discovery and registration, auth setup, error-mode
+  triage, observability hooks, cost summary, and a production
+  deployment checklist. Surfaced in the `mkdocs.yml` nav and the
+  README.
+- **5 backfilled ADRs (0013–0017)** capturing decisions visible in
+  the code but not yet recorded:
+  - 0013 OpenTelemetry-first observability with metadata-only span
+    attributes (sampling, instrumentation choice, attribute allowlist).
+  - 0014 `/extract/stream` bypasses the self-correcting retry loop
+    (rationale + alternatives).
+  - 0015 `asyncio.to_thread` offload at the route boundary instead
+    of native `Agent.invoke_async` (with the explicit reasoning
+    against the full async port).
+  - 0016 Vision-mode grounding via a second model call — the
+    automation, no-human-review framing for [ADR-0011](docs/adr/0011-prompt-injection-threat-model.md)'s
+    last Critical follow-on.
+  - 0017 Two-layer test mocking strategy (Strands Agent layer for
+    behaviour, boto3 `BaseClient._make_api_call` for wiring
+    regression).
+- **Refreshed `docs/adr/README.md` index** to list all 17 ADRs (was
+  stale, listed only 5).
+- **README**: rewrote the lede to point at `docs/consumer-guide.md`
+  and `docs/tech-stack.md` as the primary entry points; trimmed the
+  config table to most-edited settings (full checklist remains in
+  `docs/deployment-variables.md`).
+
 ### Changed (vision grounding contract tightening)
 
 - **Vision-grounding verifier response is now Pydantic-validated.**

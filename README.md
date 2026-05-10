@@ -1,17 +1,32 @@
 # bedrock-strands-agent
 
-A production-ready form-extraction agent built on the
+A production-grade form-extraction agent built on the
 [Strands Agents SDK](https://github.com/strands-agents/sdk-python) with
 [Amazon Bedrock](https://aws.amazon.com/bedrock/) as the model provider.
-It reads document text and returns structured field values defined by a
-schema (IRS W-9, invoices, or any registered schema you add).
+It reads document text or images and returns structured field values
+defined by a schema (IRS W-9, invoices, or any registered schema you
+add). Four transports — JSON HTTP, multipart upload, Server-Sent
+Events, and the [A2A agent-to-agent protocol](docs/adr/0012-a2a-protocol.md)
+— share a single schema-first pipeline (validators, citation
+verification, retry loop, prompt-injection defences, and second-pass
+vision grounding).
+
+> **Just want to call this thing?** Jump to the
+> [**Consumer guide**](docs/consumer-guide.md). It walks through every
+> endpoint with request/response shapes, error modes, auth, and a
+> production checklist.
+>
+> **Curious why we picked the libraries?** See
+> [**Technology stack**](docs/tech-stack.md).
+>
+> **Need to know what's deferred?** See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Features
 
 - **Strands + Bedrock** — Claude Sonnet 4.6 by default, fully overridable.
 - **Schema-driven extraction** — register a `FormSchema`, the service does the
   rest: prompt rendering, tool exposure, JSON parsing, validation, retry.
-- **Three input paths**:
+- **Four input paths**:
   - `POST /extract` — pre-extracted text in the request body.
   - `POST /extract/document` — multipart upload. PDFs with embedded text
     auto-route to the text path; PDFs without text are rasterised
@@ -19,6 +34,9 @@ schema (IRS W-9, invoices, or any registered schema you add).
     images (PNG/JPEG/WebP/GIF) go straight to Bedrock multimodal vision.
   - `POST /extract/stream` — Server-Sent Events. `event: chunk` per text
     delta, then a terminal `event: result` (or `event: error`).
+  - `POST /a2a/jsonrpc` — A2A agent-to-agent protocol (opt-in via
+    `A2A_ENABLED=true`); same `ExtractionResult` returned as a `DataPart`
+    artifact. See [ADR-0012](docs/adr/0012-a2a-protocol.md).
 - **Schema versioning** — request bodies and the multipart form both accept
   an optional `schema_version` to pin against a specific registered version
   (404 on mismatch).
@@ -213,26 +231,25 @@ back to `POST /extract` after a stream-side error.
 ## Configuration
 
 Every field is settable via the matching upper-snake-case env var.
+The full operator checklist (with REQUIRED markers, IAM scopes, and
+deferred Terraform variables) lives in
+[`docs/deployment-variables.md`](docs/deployment-variables.md). The
+most-edited settings are tabulated below.
 
 | Setting                              | Default                                              | Notes                                      |
 | ------------------------------------ | ---------------------------------------------------- | ------------------------------------------ |
 | `service_name`                       | `bedrock-strands-agent`                              | Used for logs and OTel `service.name`.     |
 | `service_env`                        | `local`                                              | `local`, `dev`, `staging`, `prod`.         |
 | `log_level`                          | `INFO`                                               | `DEBUG` / `INFO` / `WARNING` / `ERROR`.    |
-| `log_format`                         | `json`                                               | `json` or `text`.                          |
-| `api_host`                           | `0.0.0.0`                                            | Bind address (intentional inside a pod).   |
-| `api_port`                           | `8000`                                               |                                            |
+| `log_format`                         | `json`                                               | `json` or `text`. Production must be `json`. |
 | `aws_region` (alias `AWS_REGION`)    | `us-east-1`                                          | Bedrock region.                            |
-| `bedrock_model_id`                   | `us.anthropic.claude-sonnet-4-6-20250514-v1:0`       |                                            |
-| `bedrock_max_tokens`                 | `4096`                                               |                                            |
-| `bedrock_temperature`                | `0.0`                                                | 0.0–1.0.                                   |
-| `bedrock_top_p`                      | `0.9`                                                | 0.0–1.0.                                   |
+| `bedrock_model_id`                   | `us.anthropic.claude-sonnet-4-6-20250514-v1:0`       | Override per-deployment for cost (see [`cost-breakdown.md`](docs/cost-breakdown.md)). |
+| `auth_mode`                          | `none`                                               | `none` / `apikey` / `jwt` / `both`.        |
+| `rate_limit_enabled`                 | `false`                                              | Opt-in; only meaningful when public-facing. |
 | `otel_exporter_otlp_endpoint`        | (unset)                                              | If set, ships spans via OTLP/gRPC.         |
-| `otel_exporter_otlp_insecure`        | `true`                                               |                                            |
-| `otel_service_name`                  | (unset; falls back to `service_name`)                |                                            |
-| `strands_otel_enable_console_export` | `false`                                              | Console exporter when no OTLP endpoint.    |
 | `mcp_enabled_servers`                | `[]`                                                 | CSV of server names from `mcp.config.json`.|
-| `mcp_config_path`                    | `mcp.config.json`                                    | Path is resolved against CWD.              |
+| `a2a_enabled`                        | `false`                                              | Mount the A2A discovery + JSON-RPC endpoints. |
+| `a2a_public_url`                     | (unset; falls back to `http://{api_host}:{api_port}/a2a/jsonrpc`) | Required in prod. |
 
 ## Adding a schema
 
