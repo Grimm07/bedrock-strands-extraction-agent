@@ -17,6 +17,7 @@ errors threaded back into the prompt.
 | You want to…                                    | Read                                                                                  |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Run it locally                                  | [`README.md`](https://github.com/your-org/bedrock-strands-agent#quick-start)          |
+| See every library and why it is in the tree     | [Technology stack](tech-stack.md)                                                     |
 | Add a new form schema                           | The `add-form-schema` skill in `.claude/skills/`                                      |
 | Understand why we picked Strands                | [ADR-0001](adr/0001-strands-sdk-over-langchain.md)                                    |
 | Understand the extraction contract              | [ADR-0002](adr/0002-schema-first-extraction-with-self-correcting-retry.md)            |
