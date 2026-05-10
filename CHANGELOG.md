@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (AI-assistant tooling parity — opencode + cursor)
+
+- **`AGENTS.md`** as the canonical project-context file read by tools
+  that follow the [agents.md](https://agents.md/) spec. Captures the
+  service summary, commands, branch model (dev + main protected,
+  MR-only), files-not-to-edit, testing conventions, sensitive-data
+  discipline, and the cross-tool subagent / rule mapping. Claude
+  reads its own `CLAUDE.md` for Claude-specific quirks; the
+  substantive overlap is intentional.
+- **`opencode.json`** at the repo root mirroring the Claude
+  automations to opencode equivalents: `instructions: ["AGENTS.md"]`,
+  the `context7` and `awslabs.aws-api-mcp-server` MCP servers under
+  `mcp:`, two read-only subagents (`security-reviewer`,
+  `prompt-template-reviewer`) under `agent:` with `edit: deny`
+  permission, and the `release-notes` command under `command:`. The
+  full subagent prompts live in `.opencode/agent/*.md` and the
+  command prompt in `.opencode/command/release-notes.md`.
+- **`.cursor/mcp.json`** for the same two MCP servers via Cursor's
+  `mcpServers` schema with `${env:NAME}` interpolation for AWS region
+  + Context7 API key.
+- **`.cursor/rules/*.mdc`** for cursor: `00-project-context.mdc`
+  (always-apply, summarises commands and branch model),
+  `10-security-pii.mdc` (auto-attaches when editing
+  `extraction/service.py`, `api/routes.py`, `logging.py`,
+  `telemetry.py`, `extraction/document.py`,
+  `security/redaction.py` — encodes the PII / span-attribute /
+  auth-boundary invariants the Claude `security-reviewer` enforces),
+  `20-prompt-templates.mdc` (auto-attaches to
+  `templates/*.j2` — encodes the Jinja-template invariants the
+  Claude `prompt-template-reviewer` enforces),
+  `30-protected-files.mdc` (always-apply, advisory ban on direct
+  edits to `uv.lock` and `.env*` since cursor has no PreToolUse hook
+  to enforce mechanically).
+- Cursor and opencode have **no PostToolUse hook system**, so the
+  `ruff format-on-edit` automation remains Claude-only. Both peer
+  configs document the manual `uv run ruff format` + `ruff check
+  --fix` step in `AGENTS.md` and the project-context cursor rule.
+
 ### Added (consumer-facing docs + ADR backfill)
 
 - **`docs/consumer-guide.md`**: end-to-end walkthrough for engineers

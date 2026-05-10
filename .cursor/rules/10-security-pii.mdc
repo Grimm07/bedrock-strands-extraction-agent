@@ -1,0 +1,73 @@
+---
+description: PII / secrets / span-attribute / auth review for the extraction service hot path. Auto-attaches when editing service.py, routes.py, logging.py, or telemetry.py — the surfaces that handle SSN/EIN/tax-form data.
+globs: src/bedrock_strands_agent/extraction/service.py, src/bedrock_strands_agent/api/routes.py, src/bedrock_strands_agent/logging.py, src/bedrock_strands_agent/telemetry.py, src/bedrock_strands_agent/extraction/document.py, src/bedrock_strands_agent/security/redaction.py
+alwaysApply: false
+---
+
+# Security review checklist
+
+This file handles PII (SSN, EIN, tax-form data). Generic security
+review under-prioritises the data-leak vectors that matter here.
+Before suggesting a change, verify each invariant below. If a change
+violates any invariant, **report which one and why**, propose the
+minimal fix, and stop.
+
+## Fast first-pass commands
+
+Run these in the integrated terminal to triage:
+
+```bash
+rg -n 'document_text|ExtractedField' --glob '!tests/' --glob '!docs/' src/
+rg -n 'set_attribute\(' src/bedrock_strands_agent/extraction/service.py src/bedrock_strands_agent/telemetry.py
+rg -n 'arn:aws|AKIA[0-9A-Z]{16}' src/
+```
+
+Anything new from #1 outside the known-safe sites
+(`service.py:extract`, `routes.py:extract`, `prompts.py`, templates,
+`models.py`, `__main__.py`) deserves scrutiny. #2 should still be the
+metadata-only attribute set. #3 should stay empty.
+
+## Invariants
+
+1. **PII in logs or span attributes.** `document_text` and
+   `ExtractedField.value` carry SSN/EIN/tax data. Logs and spans are
+   long-lived and seen by operators. Log only metadata (schema, model
+   id, latency, counts).
+
+2. **Error messages must not echo input.** `raise
+   ExtractionError(f"... {raw}")` where `raw` could contain document
+   text is a leak. Raise generic messages.
+
+3. **New `/extract`-style routes need auth.** Auth is deferred to a
+   sidecar/gateway per `docs/ROADMAP.md`. New POST routes accepting
+   user input must reaffirm that assumption (comment / test note) or
+   add auth inline.
+
+4. **Span attribute names must not imply PII.** Names like
+   `extraction.document_text`, `extraction.ssn`, `extraction.value`,
+   `extraction.field_value` leak intent in distributed traces even
+   when the value is innocent. Allowed set: `extraction.schema`,
+   `extraction.schema_version`, `bedrock.model_id`,
+   `extraction.document_id`, `extraction.correlation_id`,
+   `extraction.latency_ms`, `extraction.field_count`,
+   `extraction.warning_count`, `extraction.retry_attempt`.
+
+5. **No new dependencies that log request bodies by default.**
+   Verbose middleware, full-payload OTel instrumentors, or
+   request-logger packages without redaction config are leaks.
+
+6. **`extra={}` keys in log calls must be metadata only.** No `value`,
+   `document`, `text`, or field-value keys.
+
+7. **No hardcoded credentials, secrets, or full ARNs.** AWS access
+   keys (`AKIA…`), secret keys, or `arn:aws:bedrock:...` strings
+   (which embed account ids) must not be hardcoded. Model IDs like
+   `us.anthropic.claude-...` are configuration and OK.
+
+8. **`prod`-only env regressions.** When `service_env == "prod"`:
+   never `STRANDS_OTEL_ENABLE_CONSOLE_EXPORT=true` (console exporter
+   writes spans to stdout) and never `LOG_LEVEL=DEBUG`.
+
+The CI semgrep rule `no-print-of-document-text` catches the
+direct-format case mechanically. `extra={"foo": document_text}`
+indirection is on the developer to avoid.

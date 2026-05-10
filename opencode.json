@@ -1,0 +1,75 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md"
+  ],
+  "mcp": {
+    "context7": {
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "enabled": true,
+      "env": {
+        "CONTEXT7_API_KEY": "${env:CONTEXT7_API_KEY}"
+      }
+    },
+    "awslabs.aws-api-mcp-server": {
+      "type": "local",
+      "command": ["uvx", "awslabs.aws-api-mcp-server@latest"],
+      "enabled": true,
+      "env": {
+        "AWS_REGION": "${env:AWS_REGION}",
+        "AWS_API_MCP_PROFILE_NAME": "${env:AWS_API_MCP_PROFILE_NAME}"
+      }
+    }
+  },
+  "permission": {
+    "edit": "allow",
+    "bash": {
+      "rm -rf *": "deny",
+      "git push --force*": "deny",
+      "git push * main": "deny",
+      "git push * dev": "deny",
+      "git reset --hard*": "ask",
+      "git rebase -i*": "deny",
+      "uv add *": "allow",
+      "uv run *": "allow",
+      "uv sync*": "allow",
+      "*": "ask"
+    }
+  },
+  "agent": {
+    "security-reviewer": {
+      "mode": "subagent",
+      "description": "Read-only review for PII leakage, missing auth boundaries, secret hygiene, and span-attribute safety in this Bedrock-backed extraction service. Fire when touching extraction/service.py, api/routes.py, logging.py, or telemetry.py.",
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "rg *": "allow",
+          "grep *": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "*": "deny"
+        }
+      }
+    },
+    "prompt-template-reviewer": {
+      "mode": "subagent",
+      "description": "Read-only review of src/bedrock_strands_agent/templates/*.j2 against six invariants (JSON contract, no-fences instruction, StrictUndefined safety, field-attribute injection completeness, retry-prompt errors+document injection, PII templating). Fire when changing any template.",
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "rg *": "allow",
+          "grep *": "allow",
+          "git diff*": "allow",
+          "*": "deny"
+        }
+      }
+    }
+  },
+  "command": {
+    "release-notes": {
+      "description": "Draft the next [X.Y.Z] CHANGELOG.md section from `git log v$prev..HEAD`, grouping by Conventional Commits prefix into Keep-a-Changelog buckets, folding dependabot bumps, and proposing the semver bump."
+    }
+  }
+}
