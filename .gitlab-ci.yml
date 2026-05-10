@@ -1,0 +1,424 @@
+# GitLab CI/CD pipeline mirroring the GitHub Actions stack in
+# .github/workflows/. Stages line up with the existing GitHub jobs;
+# GitLab's built-in security analyzers (Secret-Detection, SAST) replace
+# the GitHub-specific gitleaks + semgrep workflows where the built-ins
+# are functionally equivalent.
+#
+# Branch model: `main` and `dev` are both protected — direct push is
+# disallowed; everything reaches them via merge request. Pipelines run
+# on:
+#   - merge requests (lint + test + security + build, no push)
+#   - pushes to dev (full pipeline, image pushed as :dev and :sha)
+#   - pushes to main (full pipeline, image pushed as :main and :sha)
+#   - tags v*.*.* (release pipeline, retag :sha -> :version + :latest)
+#
+# A `workflow:` block at the top dedupes the MR + branch-push pair so a
+# single MR commit produces one pipeline rather than two.
+#
+# What this DOES NOT do (matching GitHub's deferrals):
+# - Deploy. There is no infra/ Terraform yet; release publishing only
+#   pushes the image to the GitLab Container Registry. Deploy is
+#   roadmap-deferred (Critical #2 in docs/ROADMAP.md).
+# - Page on burn-rate breaches. PagerDuty wiring is deferred
+#   (Critical #3); the SLO alarms have nowhere to fire to today.
+#
+# See docs/ci-gitlab.md for the side-by-side mapping of jobs to the
+# GitHub workflow files and the GitLab CI/CD variables an operator
+# must set (AWS creds for the opt-in live-Bedrock job, etc.).
+
+# ---------------------------------------------------------------------------
+# Workflow rules (top-level pipeline gating)
+#
+# Without this block, GitLab spawns one pipeline for the branch push AND a
+# second for the MR event on every commit pushed to a branch with an open
+# MR. The middle rule (`when: never`) suppresses the branch-push pipeline
+# whenever an MR is already open, so the MR-event pipeline runs alone.
+# ---------------------------------------------------------------------------
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "dev"
+
+default:
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  cache:
+    key: $CI_COMMIT_REF_SLUG
+    paths:
+      - .venv/
+      - .uv-cache/
+  before_script:
+    - export UV_CACHE_DIR=.uv-cache
+    - uv sync --all-groups --frozen
+  # Cancel obsolete pipelines on the same ref when a newer commit lands.
+  # Set to false on individual jobs (release / push) where mid-flight
+  # cancellation would be unsafe.
+  interruptible: true
+  # Tight timeout default; long jobs (build-image, k6) override.
+  timeout: 15m
+  # One automatic retry on runner-system or stuck-job failures only.
+  # Network flakes inside the script are handled per-job.
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - scheduler_failure
+
+variables:
+  # uv reads these to enforce reproducibility and turn off chatty
+  # progress bars in CI logs.
+  UV_FROZEN: "1"
+  UV_NO_PROGRESS: "1"
+  PIP_NO_CACHE_DIR: "1"
+  # GitLab Docker-in-Docker for the build job.
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+
+stages:
+  - lint
+  - test
+  - security
+  - build
+  - load-test
+  - integration
+  - release
+
+# ---------------------------------------------------------------------------
+# Shared rule sets (YAML anchors)
+#
+# Anchors give surgical reuse of just the `rules:` field. `extends:` would
+# also work but pulls in script/image/etc. — too coarse here because each
+# job below has its own script/image.
+# ---------------------------------------------------------------------------
+
+.rules:gate-default: &rules-gate-default
+  - if: $CI_COMMIT_TAG
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  - if: $CI_COMMIT_BRANCH == "main"
+  - if: $CI_COMMIT_BRANCH == "dev"
+
+.rules:gate-protected-only: &rules-gate-protected-only
+  - if: $CI_COMMIT_BRANCH == "main"
+  - if: $CI_COMMIT_BRANCH == "dev"
+
+.rules:gate-protected-manual: &rules-gate-protected-manual
+  - if: $CI_COMMIT_BRANCH == "main"
+    when: manual
+    allow_failure: true
+  - if: $CI_COMMIT_BRANCH == "dev"
+    when: manual
+    allow_failure: true
+
+.rules:gate-tag-only: &rules-gate-tag-only
+  - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+# ---------------------------------------------------------------------------
+# Hidden job templates (composition via `extends:`)
+#
+# `extends:` merges struct fields (image, services, before_script, cache,
+# interruptible) cleanly while leaving array fields (script, rules) for
+# the derived job to declare. Use this for jobs that share an environment
+# but differ in what they run.
+# ---------------------------------------------------------------------------
+
+# Docker-in-Docker jobs (build-image, release-image).
+# `before_script: []` opts out of the default uv-sync — these jobs run
+# only docker commands. `cache: []` likewise opts out of the .venv cache.
+.docker-job:
+  image: docker:27
+  services:
+    - docker:27-dind
+  before_script: []
+  cache: []
+  interruptible: false
+
+# Trivy scan jobs (trivy on PR/main/dev image, release-trivy-rescan on
+# tagged image). The trivy container has no shell entrypoint; the
+# explicit `entrypoint: [""]` lets GitLab inject its own.
+.trivy-job:
+  image:
+    name: aquasec/trivy:0.55.0
+    entrypoint: [""]
+  before_script: []
+  cache: []
+
+# ---------------------------------------------------------------------------
+# Lint stage — mirrors `.github/workflows/ci.yml::pre-commit + lint + typecheck`
+# ---------------------------------------------------------------------------
+
+ruff:
+  stage: lint
+  script:
+    - uv run ruff check src tests
+    - uv run ruff format --check src tests
+  rules: *rules-gate-default
+
+mypy:
+  stage: lint
+  script:
+    - uv run mypy src
+  rules: *rules-gate-default
+
+pre-commit:
+  stage: lint
+  variables:
+    PRE_COMMIT_HOME: $CI_PROJECT_DIR/.cache/pre-commit
+  cache:
+    key: pre-commit-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cache/pre-commit
+      - .venv/
+      - .uv-cache/
+  script:
+    - uv run pre-commit run --all-files
+  rules: *rules-gate-default
+
+# ---------------------------------------------------------------------------
+# Test stage — pytest with the 85% coverage gate, plus mkdocs --strict
+# ---------------------------------------------------------------------------
+
+pytest:
+  stage: test
+  timeout: 20m
+  script:
+    - uv run pytest --cov=src --cov-report=term --cov-report=xml --cov-report=html
+  coverage: '/(?i)TOTAL.+? ([0-9]{1,3}\.[0-9]{1,2}%)/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - coverage.xml
+      - htmlcov/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+      junit: junit.xml
+  rules: *rules-gate-default
+
+mkdocs-strict:
+  stage: test
+  script:
+    - uv run mkdocs build --strict
+  artifacts:
+    expire_in: 7 days
+    paths:
+      - site/
+  rules: *rules-gate-default
+
+# ---------------------------------------------------------------------------
+# Security stage — mirrors GitHub's bandit + pip-audit + CodeQL + Trivy +
+# semgrep + gitleaks. GitLab's built-in templates replace the GitHub-specific
+# secret + SAST workflows with their managed equivalents (CodeQL doesn't
+# have a free GitLab equivalent — we run semgrep + bandit instead).
+# ---------------------------------------------------------------------------
+
+include:
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/SAST.gitlab-ci.yml
+
+bandit:
+  stage: security
+  script:
+    - uv run bandit -c pyproject.toml -r src
+  rules: *rules-gate-default
+
+pip-audit:
+  stage: security
+  retry: 2  # PyPI metadata fetches occasionally flake.
+  script:
+    - uv run pip-audit --skip-editable --progress-spinner=off
+  rules: *rules-gate-default
+
+semgrep:
+  stage: security
+  image: returntocorp/semgrep:latest
+  before_script: []
+  cache: []
+  retry: 2  # Semgrep registry fetches occasionally flake.
+  script:
+    - semgrep ci --config .semgrep.yml --config p/python --config p/owasp-top-ten --config p/jwt --config p/secrets || true
+  rules: *rules-gate-default
+
+# ---------------------------------------------------------------------------
+# Build stage — mirrors `.github/workflows/ci.yml::build-image`. Image push
+# matrix:
+#   - merge request:        build only, no push (image.tar artifact passed to trivy)
+#   - dev branch push:      build + push :sha + :dev
+#   - main branch push:     build + push :sha + :main
+#   - tag (v*.*.*) push:    build + push :sha + :main (release-image retags
+#                           the :sha into :v* and :latest)
+#
+# `:latest` is reserved for tagged releases — main pushes do NOT update it.
+# ---------------------------------------------------------------------------
+
+build-image:
+  stage: build
+  extends: .docker-job
+  timeout: 30m
+  retry: 1  # docker-build occasionally hits transient registry pulls.
+  script:
+    - if [ -n "$CI_REGISTRY_USER" ]; then
+        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY";
+      fi
+    - docker build
+        --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+        --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
+        .
+    - if [ "$CI_COMMIT_BRANCH" = "main" ] || [ "$CI_COMMIT_BRANCH" = "dev" ] || [ -n "$CI_COMMIT_TAG" ]; then
+        docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA";
+        docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG";
+      fi
+    - docker save "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" -o image.tar
+  artifacts:
+    expire_in: 7 days
+    paths:
+      - image.tar
+  rules: *rules-gate-default
+
+trivy:
+  stage: build
+  extends: .trivy-job
+  needs: ["build-image"]
+  timeout: 20m
+  script:
+    - trivy --version
+    - trivy image
+        --severity CRITICAL,HIGH
+        --exit-code 1
+        --ignore-unfixed
+        --format sarif
+        --output trivy.sarif
+        --input image.tar
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - trivy.sarif
+  rules: *rules-gate-default
+
+# ---------------------------------------------------------------------------
+# Load-test stage — mirrors `.github/workflows/load-test.yml`. Boots the
+# stub-mode FastAPI app (no Bedrock spend) and runs the k6 ci_smoke
+# scenario (10 RPS / 30 s) with the production SLO thresholds.
+# ---------------------------------------------------------------------------
+
+k6-ci-smoke:
+  stage: load-test
+  timeout: 10m
+  retry: 1  # k6 binary download from GitHub occasionally flakes.
+  before_script:
+    # Compose default uv-sync with the k6-binary install rather than
+    # duplicating `uv sync --all-groups --frozen`.
+    - !reference [default, before_script]
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+    - curl -sL https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz
+        | tar xz --strip-components=1 k6-v0.50.0-linux-amd64/k6
+    - chmod +x k6
+  script:
+    - uv run python scripts/_boot_with_stub.py > stub.log 2>&1 &
+    - STUB_PID=$!
+    - |
+      for i in $(seq 1 30); do
+        if curl -fsS http://127.0.0.1:8765/health >/dev/null 2>&1; then
+          echo "service ready after ${i}s"
+          break
+        fi
+        sleep 1
+      done
+    - BASE_URL=http://127.0.0.1:8765 K6_PROFILE=ci ./k6 run tests/load/extract.js
+    - kill $STUB_PID 2>/dev/null || true
+  artifacts:
+    when: on_failure
+    expire_in: 7 days
+    paths:
+      - stub.log
+  rules: *rules-gate-default
+
+# ---------------------------------------------------------------------------
+# Integration stage — opt-in live-Bedrock. Manual trigger from any
+# protected branch (main or dev). Costs Bedrock invocations, so it is NOT
+# a default gate. Mirrors the `RUN_INTEGRATION_TESTS=1` opt-in in pytest.
+#
+# Requires masked + protected CI/CD variables at the project level:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN (optional),
+#   AWS_REGION (default us-east-1), BEDROCK_MODEL_ID.
+# These are only injected on protected refs — gating to {main, dev}
+# matches the project's protected-branch list.
+# ---------------------------------------------------------------------------
+
+bedrock-integration:
+  stage: integration
+  interruptible: false  # Don't kill mid-Bedrock-call (real spend).
+  timeout: 15m
+  variables:
+    RUN_INTEGRATION_TESTS: "1"
+    AWS_REGION: "us-east-1"
+  script:
+    - uv run pytest tests/test_bedrock_integration.py -m integration -v 2>&1 | tee integration.log
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - integration.log
+  rules: *rules-gate-protected-manual
+
+# ---------------------------------------------------------------------------
+# Release stage — mirrors `.github/workflows/release.yml`. Triggered only
+# on tags matching v*.*.*. Retags the already-built :short-sha image with
+# the version tag plus :latest, then runs a post-publish Trivy rescan and
+# deploys the docs to GitLab Pages. Deploy of the service is deferred.
+# ---------------------------------------------------------------------------
+
+release-image:
+  stage: release
+  extends: .docker-job
+  needs: ["build-image"]
+  timeout: 20m
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker pull "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+  rules: *rules-gate-tag-only
+
+release-trivy-rescan:
+  stage: release
+  extends: .trivy-job
+  needs: ["release-image"]
+  interruptible: false
+  timeout: 20m
+  script:
+    - trivy image
+        --severity CRITICAL,HIGH
+        --exit-code 0
+        --ignore-unfixed
+        --format sarif
+        --output trivy-release.sarif
+        "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+  artifacts:
+    expire_in: 90 days
+    paths:
+      - trivy-release.sarif
+  rules: *rules-gate-tag-only
+
+# Pages is GitLab's static-site host — the special-named `pages` job
+# publishes the `public/` artifact to <group>.gitlab.io/<project>/.
+# Builds straight into public/ to avoid the redundant `mv site public`.
+pages:
+  stage: release
+  interruptible: false
+  script:
+    - uv run mkdocs build --strict --site-dir public
+  artifacts:
+    paths:
+      - public
+  rules: *rules-gate-tag-only
