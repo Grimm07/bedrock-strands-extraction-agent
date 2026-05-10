@@ -22,15 +22,12 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
-    hooks:
-      - id: mypy
-        additional_dependencies:
-          - "pydantic>=2.9"
-          - "types-jinja2"
-        args: [--config-file=pyproject.toml]
-        files: ^src/
+  # mypy runs as a dedicated CI job (`Typecheck`) and via `make typecheck`,
+  # both inside the synced project venv where every runtime dep resolves.
+  # Running it via mirrors-mypy in pre-commit's isolated env requires
+  # mirroring the entire runtime dep list in `additional_dependencies`,
+  # which drifts from pyproject.toml in practice. Keep mypy out of the
+  # hook chain and trust the dedicated job.
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.0
