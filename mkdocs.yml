@@ -1,7 +1,7 @@
 site_name: bedrock-strands-agent
 site_description: Form-extraction agent built on Strands + Amazon Bedrock.
-site_url: https://your-org.github.io/bedrock-strands-agent/
-repo_url: https://github.com/your-org/bedrock-strands-agent
+site_url: https://grimm07.github.io/bedrock-strands-extraction-agent/
+repo_url: https://github.com/Grimm07/bedrock-strands-extraction-agent
 edit_uri: edit/main/docs/
 
 theme:

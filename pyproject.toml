@@ -62,10 +62,10 @@ dependencies = [
 bedrock-strands-agent = "bedrock_strands_agent.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/your-org/bedrock-strands-agent"
-Repository = "https://github.com/your-org/bedrock-strands-agent"
-Issues = "https://github.com/your-org/bedrock-strands-agent/issues"
-Changelog = "https://github.com/your-org/bedrock-strands-agent/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Grimm07/bedrock-strands-extraction-agent"
+Repository = "https://github.com/Grimm07/bedrock-strands-extraction-agent"
+Issues = "https://github.com/Grimm07/bedrock-strands-extraction-agent/issues"
+Changelog = "https://github.com/Grimm07/bedrock-strands-extraction-agent/blob/main/CHANGELOG.md"
 
 # ---------------------------------------------------------------------------
 # Dependency groups (PEP 735) — dev tools, picked up by `uv sync --group dev`

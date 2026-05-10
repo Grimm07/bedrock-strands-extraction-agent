@@ -308,9 +308,9 @@ curl -s http://localhost:8000/schemas | jq
 
 Returns each schema's name, version, description, field count, and
 required-field list. Two schemas ship by default:
-[`invoice`](https://github.com/Grimm07/bedrock-strands-agent/blob/main/src/bedrock_strands_agent/extraction/schemas/examples.py)
+[`invoice`](https://github.com/Grimm07/bedrock-strands-extraction-agent/blob/main/src/bedrock_strands_agent/extraction/schemas/examples.py)
 and
-[`irs_w9`](https://github.com/Grimm07/bedrock-strands-agent/blob/main/src/bedrock_strands_agent/extraction/schemas/examples.py).
+[`irs_w9`](https://github.com/Grimm07/bedrock-strands-extraction-agent/blob/main/src/bedrock_strands_agent/extraction/schemas/examples.py).
 
 ### Register a new schema
 
@@ -420,7 +420,7 @@ Every successful request emits:
   Span attributes carry only metadata (schema name + version,
   `bedrock.model_id`, latency, field/warning counts, document_id,
   correlation_id) — never the document or field values. The PII
-  redaction filter ([`redaction.py`](https://github.com/Grimm07/bedrock-strands-agent/blob/main/src/bedrock_strands_agent/security/redaction.py))
+  redaction filter ([`redaction.py`](https://github.com/Grimm07/bedrock-strands-extraction-agent/blob/main/src/bedrock_strands_agent/security/redaction.py))
   also masks SSN/EIN/email/phone/CC patterns on log records.
 
 Prometheus metrics are exposed at `/metrics` (HTTP request count and
@@ -456,7 +456,7 @@ server-side).
 
 **Retries.** Bedrock-side throttling/5xx is retried internally with
 exponential-jitter backoff (3 attempts; see
-[`bedrock_retry.py`](https://github.com/Grimm07/bedrock-strands-agent/blob/main/src/bedrock_strands_agent/agent/bedrock_retry.py)).
+[`bedrock_retry.py`](https://github.com/Grimm07/bedrock-strands-extraction-agent/blob/main/src/bedrock_strands_agent/agent/bedrock_retry.py)).
 Schema-validation failures trigger up to 2 self-correcting model
 re-prompts ([ADR-0009](adr/0009-bounded-self-correcting-retry.md)).
 After all that, the caller sees a 502. Don't add aggressive client-
@@ -503,7 +503,7 @@ uv run python scripts/_boot_with_stub.py
 
 The stub returns canned invoice JSON for every request — useful for
 smoke tests, CI, or front-end development. The CI load-test workflow
-([`load-test.yml`](https://github.com/Grimm07/bedrock-strands-agent/blob/main/.github/workflows/load-test.yml))
+([`load-test.yml`](https://github.com/Grimm07/bedrock-strands-extraction-agent/blob/main/.github/workflows/load-test.yml))
 runs against this stub.
 
 **Observability stack (Jaeger UI for local OTel):**
