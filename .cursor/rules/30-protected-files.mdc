@@ -1,0 +1,26 @@
+---
+description: Files that must never be edited directly — uv.lock and .env*. Always-on so the rule applies regardless of which file is currently open.
+alwaysApply: true
+---
+
+# Files you must NOT edit
+
+Cursor has no PreToolUse hook to enforce this mechanically (Claude
+Code blocks edits via `.claude/hooks/block_protected_files.sh`).
+The rule is on you:
+
+- **`uv.lock`** — managed by `uv add` / `uv lock`. Manual edits diverge
+  the lockfile from the resolver and break reproducibility. To add a
+  dep, run `uv add <pkg>`. To upgrade, run `uv lock --upgrade-package
+  <pkg>` or `uv lock --upgrade` for everything.
+
+- **`.env`, `.env.local`, `.env.<env>`, `.env.<env>.local`** — these
+  contain secrets and **must not** be committed. `.env.example` is
+  the only `.env*` file that is intentionally checked in and editable.
+  If the change requires a new env var, document it in
+  `.env.example` (and in `docs/deployment-variables.md`).
+
+If a refactor or rename would *appear* to require editing one of
+these files, stop and re-think — the right path almost always lives
+through `uv add` / `uv sync` for the lockfile, or `.env.example` plus
+`docs/deployment-variables.md` for env vars.

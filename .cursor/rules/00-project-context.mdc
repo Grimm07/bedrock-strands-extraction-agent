@@ -1,0 +1,58 @@
+---
+description: Always-on project context for bedrock-strands-agent — service summary, commands, branch model, files-not-to-edit
+alwaysApply: true
+---
+
+# bedrock-strands-agent
+
+FastAPI + Strands Agents extraction service over Amazon Bedrock. Hot
+path: PDF / image / text → schema-validated JSON with field-level
+confidence and citation excerpts.
+
+Detailed onboarding lives in [`AGENTS.md`](mdc:AGENTS.md). This rule
+captures the must-know basics so they are loaded into every chat.
+
+## Commands
+
+- `uv run pytest` — full suite (coverage gate 85%, set in `pyproject.toml`)
+- `uv run ruff check src tests` — lint
+- `uv run ruff format <file>` then `uv run ruff check --fix <file>`
+  after every Python edit (Cursor has no PostToolUse hook; do this
+  manually before declaring a change done)
+- `uv run mypy src` — strict typecheck
+- `uv add <pkg>` to add deps; never edit `uv.lock` directly
+
+## Branch model
+
+`main` and `dev` are **protected**. Direct push is forbidden. Land
+every change via merge/pull request from a feature branch
+(`feat/...`, `fix/...`, `chore/...`). Standard target is `dev`.
+
+## Files you must NOT edit
+
+- `uv.lock` — managed by `uv add` / `uv lock`
+- `.env`, `.env.local`, `.env.<env>`, `.env.<env>.local` — secrets;
+  `.env.example` is the only `.env*` file that's checked in and
+  editable
+
+If a change requires a `.env` template update, edit `.env.example`
+instead.
+
+## When to invoke specialised rules
+
+Cursor auto-attaches these by glob:
+
+- Any change under `src/bedrock_strands_agent/{extraction,api,logging,telemetry}.py`
+  → security-pii rule fires (`@security-pii`).
+- Any change under `src/bedrock_strands_agent/templates/*.j2`
+  → prompt-templates rule fires (`@prompt-templates`).
+
+These rules encode the same invariants the Claude `security-reviewer`
+and `prompt-template-reviewer` subagents enforce on Claude Code.
+
+## Reference
+
+- `AGENTS.md` — full onboarding
+- `docs/adr/` — 17 architecture decision records
+- `docs/runbooks/` — oncall / Bedrock throttling / extraction-error
+  spike / auth misconfig
