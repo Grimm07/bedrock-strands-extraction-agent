@@ -388,5 +388,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triggered pip-audit's internal venv creation, which fails to bootstrap
   `ensurepip` on uv-managed Python builds.
 
-[Unreleased]: https://github.com/your-org/bedrock-strands-agent/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/your-org/bedrock-strands-agent/compare/v0.1.0...v0.3.0
+[Unreleased]: https://github.com/Grimm07/bedrock-strands-extraction-agent/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Grimm07/bedrock-strands-extraction-agent/compare/v0.1.0...v0.3.0

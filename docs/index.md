@@ -21,7 +21,7 @@ contract. Schemas can be pinned per-request via `schema_version`.
 
 | You want to…                                    | Read                                                                                  |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Run it locally                                  | [`README.md`](https://github.com/your-org/bedrock-strands-agent#quick-start)          |
+| Run it locally                                  | [`README.md`](https://github.com/Grimm07/bedrock-strands-extraction-agent#quick-start)          |
 | See every library and why it is in the tree     | [Technology stack](tech-stack.md)                                                     |
 | Add a new form schema                           | The `add-form-schema` skill in `.claude/skills/`                                      |
 | Pick the right endpoint (text / vision / stream) | [Extraction modes](extraction-modes.md)                                              |
@@ -56,5 +56,5 @@ vision, scanned-PDF rasterisation, streaming SSE, request-side schema
 versioning, non-blocking route handlers) have all shipped. See the
 [`Roadmap`](ROADMAP.md) for what's still deferred — primarily the
 `infra/` IaC for AgentCore (Phase B) and the Phase D5 evaluation
-harness. The [`CHANGELOG`](https://github.com/your-org/bedrock-strands-agent/blob/main/CHANGELOG.md)
+harness. The [`CHANGELOG`](https://github.com/Grimm07/bedrock-strands-extraction-agent/blob/main/CHANGELOG.md)
 has the full per-version breakdown.
